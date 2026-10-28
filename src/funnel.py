@@ -98,7 +98,7 @@ def stage_dates(events: pd.DataFrame) -> pd.DataFrame:
         reached_previous = dates[previous].dropna().rename("previous_date")
         candidates = by_type[stage].join(reached_previous, on="user_id", how="inner")
         qualifying = candidates[candidates["event_date"] >= candidates["previous_date"]]
-        dates[stage] = qualifying.groupby("user_id")["event_date"].min()
+        dates[stage] = qualifying.reset_index(drop=True).groupby("user_id")["event_date"].min()
     return dates
 
 
