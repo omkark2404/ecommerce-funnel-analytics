@@ -1,7 +1,7 @@
 # E-commerce Funnel Analysis
 
-[![CI](https://github.com/omkark2404/Ecommerce_funnel-analytics/actions/workflows/ci.yml/badge.svg)](https://github.com/omkark2404/Ecommerce_funnel-analytics/actions/workflows/ci.yml)
-[![View rendered notebook](https://img.shields.io/badge/notebook-nbviewer-orange)](https://nbviewer.org/github/omkark2404/Ecommerce_funnel-analytics/blob/main/notebooks/funnel_analysis.ipynb)
+[![CI](https://github.com/omkark2404/ecommerce-funnel-analytics/actions/workflows/ci.yml/badge.svg)](https://github.com/omkark2404/ecommerce-funnel-analytics/actions/workflows/ci.yml)
+[![View rendered notebook](https://img.shields.io/badge/notebook-nbviewer-orange)](https://nbviewer.org/github/omkark2404/ecommerce-funnel-analytics/blob/main/notebooks/funnel_analysis.ipynb)
 
 Where do users drop out between signing up and buying, how fast do buyers convert, and does any segment behave differently? This project answers those questions for 6,000 accounts and 19,591 events across a five-stage funnel: **signup → login → product view → add to cart → purchase**.
 
@@ -70,10 +70,12 @@ Without `make`, run the commands listed in the [Makefile](Makefile) directly.
 
 ## Data and limitations
 
+- **This is sole, independent work.** The analysis, schema design, pandas implementation, SQL queries, CI pipeline, and tests were written entirely by me. Any other public repository containing a similar dataset or structure is unaffiliated.
 - **The data looks simulated, and its original source was not recorded.** Every account has at most one event per stage, no account skips a stage, and every step follows the previous one within two days. Real clickstream data does not look like this. The results demonstrate the method; they are not findings about a real store. See [data/README.md](data/README.md).
 - **Events have dates, not timestamps,** so the order of stages within a single day is assumed.
 - **There is no revenue, order, session or product data,** so the impact is measured in purchases, not money.
 - **Segment comparisons are descriptive.** The tests show whether a difference is larger than random variation, not what causes it.
+
 
 ## Repository layout
 
