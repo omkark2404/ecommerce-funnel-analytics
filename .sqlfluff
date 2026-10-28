@@ -1,0 +1,8 @@
+[sqlfluff]
+dialect = mysql
+templater = raw
+rules = core
+exclude_rules = AL07, ST06
+
+[sqlfluff:indentation]
+tab_space_size = 4

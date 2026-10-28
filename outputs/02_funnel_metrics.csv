@@ -1,0 +1,6 @@
+stage,users,previous_stage_users,step_conversion_pct,cumulative_conversion_pct
+1_signup,6000,,100.00,100.00
+2_login,5396,6000,89.93,89.93
+3_view_product,4320,5396,80.06,72.00
+4_add_to_cart,2577,4320,59.65,42.95
+5_purchase,1298,2577,50.37,21.63

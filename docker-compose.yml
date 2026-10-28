@@ -1,0 +1,18 @@
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD in .env}
+      MYSQL_DATABASE: ecommerce_analytics
+    volumes:
+      - ./data:/var/lib/mysql-files
+      - ./sql:/docker-entrypoint-initdb.d
+    ports:
+      - "127.0.0.1:3306:3306"
+    healthcheck:
+      # Probe over TCP: only the final server (started after the init scripts load the data) listens there.
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "--silent"]
+      interval: 5s
+      timeout: 20s
+      retries: 20
+      start_period: 20s
