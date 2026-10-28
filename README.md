@@ -1,6 +1,7 @@
 # E-commerce Funnel Analysis
 
 [![CI](https://github.com/omkark2404/Ecommerce_funnel-analytics/actions/workflows/ci.yml/badge.svg)](https://github.com/omkark2404/Ecommerce_funnel-analytics/actions/workflows/ci.yml)
+[![View rendered notebook](https://img.shields.io/badge/notebook-nbviewer-orange)](https://nbviewer.org/github/omkark2404/Ecommerce_funnel-analytics/blob/main/notebooks/funnel_analysis.ipynb)
 
 Where do users drop out between signing up and buying, how fast do buyers convert, and does any segment behave differently? This project answers those questions for 6,000 accounts and 19,591 events across a five-stage funnel: **signup → login → product view → add to cart → purchase**.
 
