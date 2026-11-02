@@ -6,11 +6,13 @@
 USE ecommerce_analytics;
 
 -- Make the load repeatable: a second run replaces the data instead of
--- appending duplicates. Truncate events first (foreign key), then users.
+-- appending duplicates. DELETE (not TRUNCATE) is used because MySQL
+-- refuses to truncate a table referenced by a foreign key — users is
+-- referenced by events — even when the child table is empty.
 -- This is safe for this demonstration database; do not run it against
 -- a production database without a backup.
-TRUNCATE TABLE events;
-TRUNCATE TABLE users;
+DELETE FROM events;
+DELETE FROM users;
 
 -- Load Users Data
 LOAD DATA INFILE '/var/lib/mysql-files/product_users_clean.csv'
