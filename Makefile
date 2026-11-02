@@ -35,6 +35,7 @@ validate:
 
 down:
 	$(COMPOSE) down
+	# The demo database is kept in the named mysql-data volume.
 
 # Stop the database and delete its data volume, so the next `make up`
 # starts from a clean schema. Only for the local demo database.
