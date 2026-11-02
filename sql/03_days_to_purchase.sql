@@ -3,7 +3,8 @@
 -- time to purchase. Definitions: docs/KPI_DEFINITIONS.md.
 -- Definition: any purchase on or after signup counts, even if the user
 -- skipped an intermediate stage (unlike sql/02, which requires stage
--- order). In this sample the two agree — no user skips a stage.
+-- order). In this sample the two differ: 1,275 ordered vs 1,305
+-- any-purchase purchasers, because 30 users skipped a stage.
 USE ecommerce_analytics;
 
 WITH signup_stage AS (

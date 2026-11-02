@@ -422,10 +422,10 @@ class TestCoreOutputTables:
         after signup even if the user skipped an intermediate stage,
         while funnel_metrics counts only ordered purchases.
 
-        In the shipped sample no user skips a stage, so both
-        definitions give the same 1,298 purchasers — but the
-        difference is a real definition, not an accident, so it is
-        pinned here and documented in src/funnel.py.
+        In the shipped sample 30 users skip a stage, so the two
+        definitions differ (1,275 ordered vs 1,305 any-purchase) —
+        but the difference is a real definition, not an accident, so
+        it is pinned here and documented in src/funnel.py.
         """
         users = _make_users((1, "2024-01-01", "US"))
         events = _make_events(
@@ -650,10 +650,11 @@ class TestRegressionSample:
         users, events = load_data(root / "data")
         tables = sql_result_tables(users, events)
         funnel_table = tables["02_funnel_metrics.csv"]
-        assert funnel_table["users"].tolist() == [6000, 5396, 4320, 2577, 1298]
-        assert funnel_table["cumulative_conversion_pct"].tolist()[-1] == 21.63
-        assert funnel_table["step_conversion_pct"].tolist()[-1] == 50.37
-        # Ordered and any-purchase agree on this sample (no skipped stages)
+        assert funnel_table["users"].tolist() == [6000, 5382, 4256, 2541, 1275]
+        assert funnel_table["cumulative_conversion_pct"].tolist()[-1] == 21.25
+        assert funnel_table["step_conversion_pct"].tolist()[-1] == 50.18
+        # Ordered and any-purchase differ on this sample: 30 users
+        # skipped a stage (see data/LINEAGE.md).
         dates = stage_dates(events)
-        assert len(ordered_first_purchase(dates)) == 1298
-        assert len(first_purchase_after_signup(users, events)) == 1298
+        assert len(ordered_first_purchase(dates)) == 1275
+        assert len(first_purchase_after_signup(users, events)) == 1305

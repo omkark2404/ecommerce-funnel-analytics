@@ -40,9 +40,9 @@ their signup date, even if an intermediate stage is missing.
 
 - This is a purchase metric, not a funnel metric. It answers “did this
   user ever buy after signing up?”, not “did they complete the funnel?”.
-- In the shipped sample the two definitions give the same result
-  (1,298 purchasers), because no user skips a stage. On other data they
-  can differ, and the difference is a real finding — see the test
+- In the shipped sample the two definitions differ: 1,275 ordered
+  purchasers vs 1,305 any-purchase purchasers, because 30 users
+  skipped a stage. That difference is a real finding — see the test
   `test_country_conversion_counts_any_purchase_after_signup` in
   `tests/test_funnel.py`.
 - Do not mix the two: do not compare an ordered funnel purchase count

@@ -1,10 +1,10 @@
 # Data
 
-Two CSV files, already cleaned. The raw files and the cleaning steps are not part of this repository.
+Two CSV files, generated deterministically by `scripts/generate_synthetic_data.py` (seed 42) and released under CC0 1.0. There are no raw files to clean — the generator writes the final CSVs directly.
 
 Full lineage, schema, and limitations: [LINEAGE.md](LINEAGE.md).
 
-**Licence note:** the MIT licence in the repository root covers the code. It does not cover these data files, and it does not establish permission to redistribute them — redistribution rights for the data are unverified. See [LINEAGE.md](LINEAGE.md).
+**Licence note:** the data files are released under **CC0 1.0** — no rights reserved. The MIT licence in the repository root covers the code. See [LINEAGE.md](LINEAGE.md).
 
 ## product_users_clean.csv
 
@@ -18,7 +18,7 @@ One row per account: 6,000 accounts that signed up between 2023-01-01 and 2023-0
 
 ## product_events_clean.csv
 
-One row per funnel event: 19,591 events dated 2023-01-01 to 2023-07-03.
+One row per funnel event: 19,822 events dated 2023-01-01 to 2023-07-10.
 
 | Column | Description |
 | --- | --- |
@@ -34,8 +34,8 @@ No rows were dropped or imputed by the code in this repository: the checks above
 
 ## Provenance
 
-The original source of this sample was not recorded. Its structure suggests it was generated rather than collected: every account has at most one event per stage, no account skips a stage, and each step follows the previous one within zero to two days. Section 1 of the notebook shows these checks. Treat the results as a demonstration of the method, not as facts about a real store.
+The files are synthetic, generated in this repository by `scripts/generate_synthetic_data.py` (seed 42). The previous bundled sample's source could not be verified, so it was replaced with this generated dataset — see [LINEAGE.md](LINEAGE.md) for the old numbers and what changed. Section 1 of the notebook shows the checks run on the data (repeated logins, skipped stages, late purchases). Treat the results as a demonstration of the method, not as facts about a real store.
 
-Because the source is unknown, do not cite these numbers as evidence about any real e-commerce business, and do not assume the dataset is the same as any other public funnel dataset with similar sizes — the only claims made here are about the files in `data/` and the checks run on them.
+Do not cite these numbers as evidence about any real e-commerce business — the only claims made here are about the files in `data/` and the checks run on them.
 
 The files use LF line endings (enforced by `.gitattributes`) because the MySQL load script expects them.
