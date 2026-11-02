@@ -1,3 +1,4 @@
+-- Definitions: docs/KPI_DEFINITIONS.md.
 -- Account-level signup-to-purchase conversion. Differences are descriptive;
 -- this query does not establish statistical significance or causality.
 -- Definition: any purchase on or after signup counts, even if the user

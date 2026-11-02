@@ -1,5 +1,9 @@
+-- Definitions: docs/KPI_DEFINITIONS.md.
 -- Seven-day signup-to-purchase conversion among users with a complete
 -- seven-day observation window. The window is derived from the latest event.
+-- Window boundary is inclusive of day 7: purchase_date <= signup_date + 7 days.
+-- observed_through is the maximum event date in the data; no separate
+-- observation-end date is provided, so this is an assumption.
 USE ecommerce_analytics;
 
 WITH observation_window AS (

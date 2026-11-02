@@ -1,6 +1,6 @@
 -- Days from signup to first purchase among observed purchasers. This is a
 -- distribution of buyers, not a conversion rate: newer signups have had less
--- time to purchase.
+-- time to purchase. Definitions: docs/KPI_DEFINITIONS.md.
 -- Definition: any purchase on or after signup counts, even if the user
 -- skipped an intermediate stage (unlike sql/02, which requires stage
 -- order). In this sample the two agree — no user skips a stage.
