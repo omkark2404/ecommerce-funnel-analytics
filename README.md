@@ -7,9 +7,13 @@
 
 Where do users drop out between signing up and buying, how fast do buyers convert, and does any segment behave differently? This project answers those questions for 6,000 accounts and 19,591 events (Jan–Jul 2023) across a five-stage funnel: **signup → login → product view → add to cart → purchase**.
 
+**Business question:** where do users drop out of the purchase funnel, and what should a team investigate first?
+
 **Tools:** MySQL 8.4 (CTEs, window functions) · Python (pandas, SciPy, matplotlib) · Jupyter · Docker Compose · GitHub Actions
 
 **Full analysis:** [notebooks/funnel_analysis.ipynb](notebooks/funnel_analysis.ipynb)
+
+**KPI definitions:** [docs/KPI_DEFINITIONS.md](docs/KPI_DEFINITIONS.md) — ordered vs any-purchase conversion, the seven-day window (inclusive of day 7), and right-censoring. **Data lineage and limitations:** [data/LINEAGE.md](data/LINEAGE.md).
 
 ## Key findings
 
@@ -47,36 +51,44 @@ These are hypotheses to test with A/B experiments, because observational data ca
 | Days to first purchase, with a running total from a window function | [sql/03_days_to_purchase.sql](sql/03_days_to_purchase.sql) |
 | Conversion by country | [sql/04_country_segmentation.sql](sql/04_country_segmentation.sql) |
 | Seven-day conversion, counting only users with a complete seven-day window | [sql/05_seven_day_conversion.sql](sql/05_seven_day_conversion.sql) |
+| Data-quality checks in MySQL (duplicates, orphans, events before signup, nulls) | [sql/06_data_quality.sql](sql/06_data_quality.sql) |
 | Same metrics in pandas, plus data-quality checks | [src/funnel.py](src/funnel.py) |
 | Charts, chi-square tests, 95% confidence intervals, cohort and sensitivity analysis | [notebooks/funnel_analysis.ipynb](notebooks/funnel_analysis.ipynb) |
 | Cross-check: run every query in MySQL and compare with the pandas result | [scripts/validate_results.py](scripts/validate_results.py) |
+| Check that chart figures are present and valid PNGs | [scripts/check_figures.py](scripts/check_figures.py) |
 
-On every push, CI lints the SQL and Python, runs the unit tests, runs the notebook, confirms the committed CSVs in `outputs/` are up to date, loads the data into a MySQL container, and checks that each query returns exactly the same table as pandas.
+On every push, CI lints the SQL, lints and format-checks the Python (ruff), runs the unit tests (including a MySQL integration test on synthetic edge-case data), runs the notebook, confirms the committed CSVs in `outputs/` are up to date, checks the chart figures, loads the data into a MySQL container, and checks that each query returns exactly the same table as pandas. See [.github/workflows/ci.yml](.github/workflows/ci.yml).
 
 ## Run it
 
-Requires Python 3.12. The notebook does not need a database.
+Requires Python 3.12 and, for the MySQL steps, Docker. `make` is used below (Bash / macOS / Linux; on Windows use Git Bash, WSL, or run the commands in the [Makefile](Makefile) directly). The notebook does not need a database.
 
 ```bash
+git clone https://github.com/omkark2404/ecommerce-funnel-analytics.git
+cd ecommerce-funnel-analytics
 python -m pip install -r requirements-dev.txt
-make test      # unit tests for src/funnel.py
+make test      # unit tests for src/funnel.py (47 tests; 1 MySQL integration test is skipped without a database)
 make lint      # sqlfluff for SQL, ruff for Python
-make notebook  # re-run the notebook in place
+make check     # lint + tests + ruff format check + figure check
+make notebook  # re-run the notebook in place (regenerates outputs/*.csv and outputs/figures/*.png)
+make figures   # check the chart figures are present and valid PNGs
 ```
 
-To run the SQL against MySQL as well, you need Docker. Copy `.env.example` to `.env`, set `MYSQL_ROOT_PASSWORD`, then:
+To run the SQL against MySQL as well, copy `.env.example` to `.env`, set `MYSQL_ROOT_PASSWORD`, then:
 
 ```bash
-make up
-make validate
-make down
+make up        # start MySQL in Docker and load the schema + data
+make validate  # run the SQL queries and compare with pandas (also runs the data-quality checks)
+make down      # stop MySQL (keeps its data)
+make reset     # stop MySQL and delete its data volume — clean start next time
 ```
 
 Without `make`, run the commands listed in the [Makefile](Makefile) directly.
 
 ## Data and limitations
 
-- **The data looks simulated, and its original source was not recorded.** Every account has at most one event per stage, no account skips a stage, and every step follows the previous one within two days. Real clickstream data does not look like this. The results demonstrate the method; they are not findings about a real store. See [data/README.md](data/README.md). The raw files and cleaning steps are not in this repository — the CSVs here are the cleaned inputs, and `src/funnel.py` refuses to load them if any integrity check fails.
+- **The data looks simulated, and its original source was not recorded.** Every account has at most one event per stage, no account skips a stage, and every step follows the previous one within two days. Real clickstream data does not look like this. The results demonstrate the method; they are not findings about a real store. See [data/README.md](data/README.md) and [data/LINEAGE.md](data/LINEAGE.md). The raw files and cleaning steps are not in this repository — the CSVs here are the cleaned inputs, and `src/funnel.py` refuses to load them if any integrity check fails. **Redistribution rights for the data are unverified; the MIT licence covers the code, not the data files.**
+- **Definitions matter:** the ordered funnel (sql/02) counts only purchases reached in stage order, while days-to-purchase and country conversion count any purchase after signup. In this sample both give 1,298 purchasers, because no user skips a stage — on other data they can differ. See [docs/KPI_DEFINITIONS.md](docs/KPI_DEFINITIONS.md).
 - **Events have dates, not timestamps,** so the order of stages within a single day is assumed.
 - **There is no revenue, order, session or product data,** so the impact is measured in purchases, not money.
 - **Segment comparisons are descriptive.** The tests show whether a difference is larger than random variation, not what causes it. Six chi-square tests are run in the notebook (countries, months, and four funnel steps); with a Bonferroni threshold of 0.05 / 6 ≈ 0.008, none is significant — the smallest p-value is 0.20 — so the "no segment stands out" conclusion does not depend on uncorrected testing.
@@ -85,11 +97,12 @@ Without `make`, run the commands listed in the [Makefile](Makefile) directly.
 ## Repository layout
 
 ```text
-data/        Input CSVs and data documentation
-sql/         MySQL schema, load script and analysis queries
+data/        Input CSVs and data documentation (README, LINEAGE)
+docs/        KPI definitions
+sql/         MySQL schema, load script, analysis queries and data-quality checks
 src/         pandas implementation of the funnel metrics
 notebooks/   Full analysis with charts and statistical tests
-scripts/     MySQL vs pandas result validation
+scripts/     MySQL vs pandas result validation, figure checks
 outputs/     Result CSVs and chart images produced by the notebook
 ```
 

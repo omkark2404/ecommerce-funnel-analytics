@@ -22,3 +22,8 @@ CREATE TABLE IF NOT EXISTS events (
     FOREIGN KEY (user_id) REFERENCES users (user_id),
     INDEX idx_events_user_type_date (user_id, event_type, event_date)
 );
+-- No UNIQUE(user_id, event_type, event_date) is imposed here: repeated
+-- events of the same type on different dates are legitimate in
+-- clickstream data. Exact duplicate event records are detected by
+-- sql/06_data_quality.sql and by src/funnel.py:integrity_problems,
+-- instead of being silently accepted or rejected by the schema.

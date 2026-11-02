@@ -2,6 +2,10 @@
 
 Two CSV files, already cleaned. The raw files and the cleaning steps are not part of this repository.
 
+Full lineage, schema, and limitations: [LINEAGE.md](LINEAGE.md).
+
+**Licence note:** the MIT licence in the repository root covers the code. It does not cover these data files, and it does not establish permission to redistribute them — redistribution rights for the data are unverified. See [LINEAGE.md](LINEAGE.md).
+
 ## product_users_clean.csv
 
 One row per account: 6,000 accounts that signed up between 2023-01-01 and 2023-06-29.
@@ -24,7 +28,7 @@ One row per funnel event: 19,591 events dated 2023-01-01 to 2023-07-03.
 
 ## Checks
 
-`src/funnel.py` refuses to load the files if there are missing values, duplicate accounts, unknown event types, events for unknown accounts, events dated before signup, or signup events that disagree with `signup_date`. The files pass all of these checks.
+`src/funnel.py` refuses to load the files if there are missing values, duplicate accounts, duplicate event records, unknown event types, events for unknown accounts, events dated before signup, or signup events that disagree with `signup_date`. The files pass all of these checks.
 
 No rows were dropped or imputed by the code in this repository: the checks above are validation, not cleaning. If a future data drop fails a check, the load fails loudly instead of silently producing a funnel from bad data.
 

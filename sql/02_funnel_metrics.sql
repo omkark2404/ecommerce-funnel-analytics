@@ -1,3 +1,4 @@
+-- Definitions: docs/KPI_DEFINITIONS.md.
 -- User-level funnel. Date-only data means same-day events are treated as
 -- eligible in the listed stage order; the source cannot prove within-day order.
 --

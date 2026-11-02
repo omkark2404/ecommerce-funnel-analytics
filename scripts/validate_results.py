@@ -22,7 +22,9 @@ def mysql_command(mode: str) -> tuple[list[str], dict[str, str]]:
     env = os.environ.copy()
     if mode == "docker":
         if shutil.which("docker") is None:
-            raise RuntimeError("Docker Compose is not installed or not available on PATH.")
+            raise RuntimeError(
+                "Docker Compose is not installed or not available on PATH."
+            )
         command = [
             "docker",
             "compose",
@@ -37,10 +39,14 @@ def mysql_command(mode: str) -> tuple[list[str], dict[str, str]]:
 
     mysql_client = shutil.which("mysql")
     if mysql_client is None:
-        raise RuntimeError("The MySQL client is not installed or not available on PATH.")
+        raise RuntimeError(
+            "The MySQL client is not installed or not available on PATH."
+        )
     env["MYSQL_PWD"] = env.get("MYSQL_PWD", env.get("MYSQL_ROOT_PASSWORD", ""))
     if not env["MYSQL_PWD"]:
-        raise ValueError("Set MYSQL_PWD (or MYSQL_ROOT_PASSWORD) before connecting to MySQL.")
+        raise ValueError(
+            "Set MYSQL_PWD (or MYSQL_ROOT_PASSWORD) before connecting to MySQL."
+        )
     command = [
         mysql_client,
         "--batch",
@@ -75,11 +81,18 @@ def query_rows(command: list[str], env: dict[str, str], sql_text: str, label: st
     rows = list(csv.reader(io.StringIO(result.stdout), delimiter="\t"))
     if not rows:
         raise RuntimeError(f"MySQL returned no rows for {label}")
-    return [[("" if value in ("NULL", r"\N") else value) for value in row] for row in rows]
+    return [
+        [("" if value in ("NULL", r"\N") else value) for value in row] for row in rows
+    ]
 
 
 def check_loaded_tables(command: list[str], env: dict[str, str], users, events) -> None:
-    """Confirm MySQL holds the same rows as the CSVs before comparing results."""
+    """Confirm MySQL holds the same rows as the CSVs before comparing results.
+
+    Row counts alone would miss a swapped country, a shifted date, or a
+    duplicate event record, so this also checks per-stage and per-country
+    counts, date ranges, and the data-quality query in sql/06.
+    """
     sql = """
 USE ecommerce_analytics;
 SELECT
@@ -98,7 +111,51 @@ SELECT
             "MySQL tables do not match the CSV inputs.\n"
             f"Expected: {expected}\nActual:   {actual}"
         )
-    print(f"MySQL tables match the CSVs ({len(users):,} users, {len(events):,} events).")
+    print(
+        f"MySQL tables match the CSVs ({len(users):,} users, {len(events):,} events)."
+    )
+
+    # Per-stage event counts and per-country user counts, compared to pandas.
+    stage_sql = """
+USE ecommerce_analytics;
+SELECT event_type, COUNT(*) FROM events GROUP BY event_type ORDER BY event_type;
+"""
+    stage_actual = query_rows(command, env, stage_sql, "event counts by stage")
+    stage_expected = [["event_type", "COUNT(*)"]] + [
+        [stage, str(int((events["event_type"] == stage).sum()))]
+        for stage in sorted(events["event_type"].unique())
+    ]
+    if stage_actual != stage_expected:
+        raise ValueError(
+            "MySQL event counts by stage do not match the CSVs.\n"
+            f"Expected: {stage_expected}\nActual:   {stage_actual}"
+        )
+    country_sql = """
+USE ecommerce_analytics;
+SELECT country, COUNT(*) FROM users GROUP BY country ORDER BY country;
+"""
+    country_actual = query_rows(command, env, country_sql, "user counts by country")
+    country_expected = [["country", "COUNT(*)"]] + [
+        [country, str(int((users["country"] == country).sum()))]
+        for country in sorted(users["country"].unique())
+    ]
+    if country_actual != country_expected:
+        raise ValueError(
+            "MySQL user counts by country do not match the CSVs.\n"
+            f"Expected: {country_expected}\nActual:   {country_actual}"
+        )
+    print("MySQL per-stage and per-country counts match the CSVs.")
+
+    # Data-quality query: every check must return 0 problems.
+    quality_sql = (ROOT / "sql" / "06_data_quality.sql").read_text(encoding="utf-8")
+    quality = query_rows(command, env, quality_sql, "06_data_quality.sql")
+    failures = [row for row in quality[1:] if row[1] != "0"]
+    if failures:
+        raise ValueError(
+            "MySQL data-quality checks failed:\n"
+            + "\n".join(f"- {name}: {count} problems" for name, count in failures)
+        )
+    print(f"MySQL data-quality checks passed ({len(quality) - 1} checks, 0 problems).")
 
 
 def main() -> int:
@@ -126,7 +183,13 @@ def main() -> int:
                     f"Expected: {expected}\nActual:   {actual}"
                 )
             print(f"{sql_name}: matches pandas ({len(table)} rows).")
-    except (OSError, ValueError, RuntimeError, csv.Error, subprocess.SubprocessError) as exc:
+    except (
+        OSError,
+        ValueError,
+        RuntimeError,
+        csv.Error,
+        subprocess.SubprocessError,
+    ) as exc:
         print(f"Result validation failed: {exc}", file=sys.stderr)
         return 1
     return 0

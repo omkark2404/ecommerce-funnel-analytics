@@ -5,14 +5,19 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Least privilege: this workflow only reads the repository.
+permissions:
+  contents: read
+
 jobs:
   validate:
-    name: Lint SQL, run the notebook, check MySQL results
+    name: Lint, test, run the notebook, check MySQL results
     runs-on: ubuntu-24.04
     services:
       mysql:
         image: mysql:8.4
         env:
+          # Ephemeral CI-only test database with sample data; not a real secret.
           MYSQL_ROOT_PASSWORD: root
           MYSQL_DATABASE: ecommerce_analytics
         ports:
@@ -30,6 +35,9 @@ jobs:
       MYSQL_PWD: root
       PYTHONPATH: ${{ github.workspace }}
     steps:
+      # Actions are pinned to major versions (v7) and updated by
+      # Dependabot; SHA pinning was considered and not adopted, so
+      # Dependabot can keep updating them. See docs/CI.md if added.
       - uses: actions/checkout@v7
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -40,12 +48,24 @@ jobs:
         run: python -m pip install -r requirements-dev.txt
       - name: Lint SQL
         run: python -m sqlfluff lint sql/
+      - name: Lint Python
+        run: python -m ruff check src tests scripts
+      - name: Check Python formatting
+        run: python -m ruff format --check src tests scripts
       - name: Run unit tests
+        # Includes the MySQL integration test in tests/test_sql_mysql.py,
+        # which runs when MYSQL_PWD is set (it is, in this job) and is
+        # skipped otherwise.
         run: python -m pytest tests/ -v
       - name: Run the notebook
         run: python -m nbconvert --to notebook --execute notebooks/funnel_analysis.ipynb --output-dir "$RUNNER_TEMP"
       - name: Check committed result CSVs are current
         run: git diff --exit-code -- 'outputs/*.csv'
+      - name: Check chart figures are present and valid
+        # PNG bytes vary across matplotlib versions, so this validates
+        # that each figure exists and is a real PNG — it does not
+        # compare bytes. See scripts/check_figures.py.
+        run: python scripts/check_figures.py
       - name: Copy CSV inputs into MySQL service
         run: |
           docker cp data/product_users_clean.csv ${{ job.services.mysql.id }}:/var/lib/mysql-files/

@@ -8,6 +8,9 @@
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+markers = [
+    "integration: tests that need a live MySQL server (skipped otherwise)",
+]
 
 [tool.ruff]
 line-length = 88
