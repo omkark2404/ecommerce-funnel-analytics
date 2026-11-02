@@ -1,0 +1,14 @@
+# Keep pinned Python dependencies and GitHub Actions up to date.
+# Dependabot opens a PR per update; CI must pass before merging.
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 5
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 5

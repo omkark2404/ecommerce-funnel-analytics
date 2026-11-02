@@ -6,7 +6,11 @@ services:
       MYSQL_DATABASE: ecommerce_analytics
     volumes:
       - ./data:/var/lib/mysql-files
-      - ./sql:/docker-entrypoint-initdb.d
+      # Only the schema and load scripts run at first start. Mounting
+      # the whole sql/ directory here also ran the analysis queries
+      # (02-05) at init, discarding their output.
+      - ./sql/00_schema.sql:/docker-entrypoint-initdb.d/00_schema.sql:ro
+      - ./sql/01_load_data.sql:/docker-entrypoint-initdb.d/01_load_data.sql:ro
     ports:
       - "127.0.0.1:3306:3306"
     healthcheck:
