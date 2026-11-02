@@ -1,22 +1,31 @@
 # Branch protection and repository security
 
-## Current status (checked 2026-11-03)
+## Current status (checked 2026-11-03, via the GitHub website)
 
 - **`main` is not protected.** There is no branch protection rule on
   `main` and no active repository ruleset, so a direct push to `main`
-  currently succeeds with no CI check and no review. (Found by the
-  previous audit: `main.protected = false`, no rulesets. Re-check the
-  Settings > Branches page before applying the steps below — the
-  state is cheap to confirm and this file records the last verified
-  state, 2026-11-03.)
+  currently succeeds with no CI check and no review. The Branch
+  protection rules page lists no rules at all, and the Rulesets page
+  lists no rulesets.
+- **Secret scanning is already on.** Under Settings > Advanced
+  Security, Secret Protection is enabled (with 2 custom patterns)
+  and **Push protection is on**. There is **1 secret-scanning alert**
+  on the repository — review it at
+  https://github.com/omkark2404/ecommerce-funnel-analytics/security/secret-scanning
+  and resolve it (revoke/rotate the exposed value if it is real, or
+  dismiss it with a reason if it is a false positive). This was not
+  investigated further from here.
+- **Dependabot alerts and the dependency graph are off.** Dependabot
+  version updates (`.github/dependabot.yml`) still run, but without
+  alerts the owner is not notified when a dependency has a known
+  vulnerability. Enable both under Settings > Advanced Security >
+  Dependabot (they are free for public repositories).
 - **Workflow permissions are least-privilege.** `.github/workflows/ci.yml`
   declares `permissions: contents: read`, and the actions it uses are
   pinned to full commit SHAs (see the workflow file).
 - **CI credentials are ephemeral.** The MySQL password in the workflow
   is for a throwaway CI-only test database with sample data, not a real
   secret, and is documented as such in the workflow.
-- **Dependabot is configured** (`.github/dependabot.yml`) for pip and
-  GitHub Actions, and its updates are tested by CI before merging.
 
 ## Recommended rule for `main`
 
@@ -64,14 +73,12 @@ not both, or the two can conflict.
 
 ## Secret scanning
 
-Under Settings > Code security and analysis, enable **Secret
-scanning** (and **Push protection** if offered for this repository
-type) so a committed credential is flagged. This repository has no
-secrets in it — the only password-like value is the ephemeral CI
-MySQL password — but scanning is free insurance. If secret scanning
-is not available on the free plan for public repositories, the
-manual alternative is to never commit `.env` (it is gitignored)
-and to review `git diff` before pushing.
+Secret scanning and push protection are already enabled (see above).
+Review the 1 open secret-scanning alert and enable Dependabot alerts
+and the dependency graph, as described in the status section. If a
+credential is ever committed, the manual alternative is to never
+commit `.env` (it is gitignored) and to review `git diff` before
+pushing.
 
 ## What was deliberately not changed
 
