@@ -103,7 +103,15 @@ def stage_dates(events: pd.DataFrame) -> pd.DataFrame:
 
 
 def first_purchase_after_signup(users: pd.DataFrame, events: pd.DataFrame) -> pd.DataFrame:
-    """Each user with a purchase on or after signup, and the days it took."""
+    """Each user with a purchase on or after signup, and the days it took.
+
+    Note the definition: this counts *any* purchase on or after signup,
+    even if the user skipped an intermediate stage. funnel_metrics()
+    is stricter — it counts only purchases reached in stage order.
+    In the shipped sample the two agree (1,298 purchasers, no user
+    skips a stage; see notebook §1), but they are different metrics
+    and the difference is pinned by a test in tests/test_funnel.py.
+    """
     purchases = events.loc[events["event_type"] == "purchase", ["user_id", "event_date"]]
     joined = purchases.merge(users[["user_id", "signup_date"]], on="user_id")
     joined = joined[joined["event_date"] >= joined["signup_date"]]
@@ -150,7 +158,13 @@ def days_to_purchase(first_purchases: pd.DataFrame) -> pd.DataFrame:
 
 
 def country_conversion(users: pd.DataFrame, first_purchases: pd.DataFrame) -> pd.DataFrame:
-    """Share of each country's users with a purchase on or after signup (sql/04)."""
+    """Share of each country's users with a purchase on or after signup (sql/04).
+
+    Uses first_purchase_after_signup(), so — like days_to_purchase() —
+    it counts any purchase after signup, not only ordered funnel
+    purchases. See first_purchase_after_signup() for why that matters
+    and why the shipped sample is unaffected.
+    """
     purchased = users["user_id"].isin(first_purchases.index)
     grouped = (
         users.assign(purchased=purchased)
