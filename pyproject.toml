@@ -1,0 +1,21 @@
+# Tool configuration for this analysis repository.
+#
+# This is an analysis repo, not an installable library: the code in
+# src/ is run from the repository root (PYTHONPATH=.), as CI does.
+# This file therefore configures pytest and ruff only; dependencies
+# are pinned in requirements.txt / requirements-dev.txt.
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+ignore = ["E501"]  # long lines are common in SQL strings / test data; ruff still checks the rest
+
+[tool.ruff.lint.isort]
+known-first-party = ["funnel", "src"]
