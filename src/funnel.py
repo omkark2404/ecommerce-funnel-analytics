@@ -4,6 +4,10 @@ The MySQL queries in sql/ and these functions implement the same metric
 definitions. scripts/validate_results.py runs the queries and checks that MySQL
 returns exactly the tables produced here, and the notebook builds its charts and
 extra analysis on top of these functions.
+
+KPI definitions, including the difference between ordered-funnel
+conversion and any-purchase conversion, and the seven-day window
+boundary, are in docs/KPI_DEFINITIONS.md.
 """
 
 from __future__ import annotations
@@ -58,6 +62,15 @@ def integrity_problems(users: pd.DataFrame, events: pd.DataFrame) -> list[str]:
         problems.append("missing values")
     if users["user_id"].duplicated().any():
         problems.append("duplicate user_id values in users")
+    # Exact duplicate event records (same user, type and date). Repeated
+    # events of the same type on *different* dates are legitimate in
+    # clickstream data and are not flagged here; only the first
+    # qualifying event counts for a stage.
+    if events.duplicated(subset=["user_id", "event_type", "event_date"]).any():
+        n_dup = int(
+            events.duplicated(subset=["user_id", "event_type", "event_date"]).sum()
+        )
+        problems.append(f"{n_dup} duplicate event records (same user, type and date)")
     unknown_types = set(events["event_type"]) - set(STAGES)
     if unknown_types:
         problems.append(f"unknown event types: {sorted(unknown_types)}")
@@ -66,7 +79,9 @@ def integrity_problems(users: pd.DataFrame, events: pd.DataFrame) -> list[str]:
         problems.append(f"{orphans.sum()} events reference unknown users")
 
     # Drop duplicate accounts here so the remaining rules can still be checked and reported.
-    signup_by_user = users.drop_duplicates("user_id").set_index("user_id")["signup_date"]
+    signup_by_user = users.drop_duplicates("user_id").set_index("user_id")[
+        "signup_date"
+    ]
     before_signup = events["event_date"] < events["user_id"].map(signup_by_user)
     if before_signup.any():
         problems.append(f"{before_signup.sum()} events occur before the user's signup")
@@ -98,11 +113,15 @@ def stage_dates(events: pd.DataFrame) -> pd.DataFrame:
         reached_previous = dates[previous].dropna().rename("previous_date")
         candidates = by_type[stage].join(reached_previous, on="user_id", how="inner")
         qualifying = candidates[candidates["event_date"] >= candidates["previous_date"]]
-        dates[stage] = qualifying.reset_index(drop=True).groupby("user_id")["event_date"].min()
+        dates[stage] = (
+            qualifying.reset_index(drop=True).groupby("user_id")["event_date"].min()
+        )
     return dates
 
 
-def first_purchase_after_signup(users: pd.DataFrame, events: pd.DataFrame) -> pd.DataFrame:
+def first_purchase_after_signup(
+    users: pd.DataFrame, events: pd.DataFrame
+) -> pd.DataFrame:
     """Each user with a purchase on or after signup, and the days it took.
 
     Note the definition: this counts *any* purchase on or after signup,
@@ -112,7 +131,9 @@ def first_purchase_after_signup(users: pd.DataFrame, events: pd.DataFrame) -> pd
     skips a stage; see notebook §1), but they are different metrics
     and the difference is pinned by a test in tests/test_funnel.py.
     """
-    purchases = events.loc[events["event_type"] == "purchase", ["user_id", "event_date"]]
+    purchases = events.loc[
+        events["event_type"] == "purchase", ["user_id", "event_date"]
+    ]
     joined = purchases.merge(users[["user_id", "signup_date"]], on="user_id")
     joined = joined[joined["event_date"] >= joined["signup_date"]]
     first = joined.groupby("user_id").agg(
@@ -120,6 +141,76 @@ def first_purchase_after_signup(users: pd.DataFrame, events: pd.DataFrame) -> pd
     )
     first["days_to_purchase"] = (first["purchase_date"] - first["signup_date"]).dt.days
     return first
+
+
+def ordered_first_purchase(dates: pd.DataFrame) -> pd.DataFrame:
+    """First *ordered* purchase per user, from stage_dates().
+
+    Unlike first_purchase_after_signup(), this counts only purchases
+    reached in stage order. Returns the same shape (signup_date,
+    purchase_date, days_to_purchase) so the two definitions can be
+    compared directly. See docs/KPI_DEFINITIONS.md.
+    """
+    ordered = dates[dates["purchase"].notna()][["signup", "purchase"]].copy()
+    ordered = ordered.rename(
+        columns={"signup": "signup_date", "purchase": "purchase_date"}
+    )
+    ordered["days_to_purchase"] = (
+        ordered["purchase_date"] - ordered["signup_date"]
+    ).dt.days
+    return ordered
+
+
+def country_conversion_ordered(
+    users: pd.DataFrame, dates: pd.DataFrame
+) -> pd.DataFrame:
+    """Country conversion using ordered-funnel purchases only.
+
+    Same shape as country_conversion(), but purchasers are users with
+    a non-null ordered purchase date in stage_dates(). In the shipped
+    sample this gives the same numbers as country_conversion();
+    on data with skipped stages it will be lower. See
+    docs/KPI_DEFINITIONS.md.
+    """
+    purchased = users["user_id"].isin(dates[dates["purchase"].notna()].index)
+    grouped = (
+        users.assign(purchased=purchased)
+        .groupby("country")["purchased"]
+        .agg(total_users="size", valid_purchases="sum")
+        .reset_index()
+    )
+    grouped["conversion_rate_pct"] = [
+        pct(p, n) for p, n in zip(grouped["valid_purchases"], grouped["total_users"])
+    ]
+    return grouped.sort_values(
+        ["conversion_rate_pct", "country"], ascending=[False, True], ignore_index=True
+    )
+
+
+def country_conversion_mature(
+    users: pd.DataFrame, events: pd.DataFrame
+) -> pd.DataFrame:
+    """Country conversion among mature users only (seven-day window).
+
+    A sensitivity check for right-censoring: country_conversion()
+    counts all users, including recent signups with less than seven
+    days of follow-up. This version counts only users with a complete
+    seven-day window, using mature_users(). In the shipped sample the
+    two are close; the headline country table remains the all-users
+    version, documented in docs/KPI_DEFINITIONS.md.
+    """
+    eligible, _, _ = mature_users(users, events)
+    grouped = (
+        eligible.groupby("country")["converted"]
+        .agg(total_users="size", valid_purchases="sum")
+        .reset_index()
+    )
+    grouped["conversion_rate_pct"] = [
+        pct(p, n) for p, n in zip(grouped["valid_purchases"], grouped["total_users"])
+    ]
+    return grouped.sort_values(
+        ["conversion_rate_pct", "country"], ascending=[False, True], ignore_index=True
+    )
 
 
 def funnel_metrics(dates: pd.DataFrame) -> pd.DataFrame:
@@ -133,7 +224,9 @@ def funnel_metrics(dates: pd.DataFrame) -> pd.DataFrame:
                 "stage": f"{index + 1}_{stage}",
                 "users": users_at_stage,
                 "previous_stage_users": previous,
-                "step_conversion_pct": pct(users_at_stage, previous) if index else 100.0,
+                "step_conversion_pct": pct(users_at_stage, previous)
+                if index
+                else 100.0,
                 "cumulative_conversion_pct": pct(users_at_stage, counts[0]),
             }
         )
@@ -157,7 +250,9 @@ def days_to_purchase(first_purchases: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def country_conversion(users: pd.DataFrame, first_purchases: pd.DataFrame) -> pd.DataFrame:
+def country_conversion(
+    users: pd.DataFrame, first_purchases: pd.DataFrame
+) -> pd.DataFrame:
     """Share of each country's users with a purchase on or after signup (sql/04).
 
     Uses first_purchase_after_signup(), so — like days_to_purchase() —
@@ -183,15 +278,27 @@ def country_conversion(users: pd.DataFrame, first_purchases: pd.DataFrame) -> pd
 def mature_users(
     users: pd.DataFrame, events: pd.DataFrame, follow_up_days: int = FOLLOW_UP_DAYS
 ) -> tuple[pd.DataFrame, pd.Timestamp, pd.Timestamp]:
-    """Users with a complete follow-up window, flagged if they bought within it."""
+    """Users with a complete follow-up window, flagged if they bought within it.
+
+    Window is inclusive of the boundary day: a purchase counts if
+    signup_date <= purchase_date <= signup_date + follow_up_days.
+    observed_through is the maximum event date in the data — no
+    separate observation-end date is provided, so this is an
+    assumption, documented in docs/KPI_DEFINITIONS.md.
+    """
     observed_through = events["event_date"].max()
     cutoff = observed_through - pd.Timedelta(days=follow_up_days)
     eligible = users[users["signup_date"] <= cutoff].copy()
-    purchases = events.loc[events["event_type"] == "purchase", ["user_id", "event_date"]]
+    purchases = events.loc[
+        events["event_type"] == "purchase", ["user_id", "event_date"]
+    ]
     window = purchases.merge(eligible[["user_id", "signup_date"]], on="user_id")
     in_window = window[
         (window["event_date"] >= window["signup_date"])
-        & (window["event_date"] <= window["signup_date"] + pd.Timedelta(days=follow_up_days))
+        & (
+            window["event_date"]
+            <= window["signup_date"] + pd.Timedelta(days=follow_up_days)
+        )
     ]
     eligible["converted"] = eligible["user_id"].isin(in_window["user_id"])
     return eligible, cutoff, observed_through
@@ -215,7 +322,9 @@ def seven_day_conversion(users: pd.DataFrame, events: pd.DataFrame) -> pd.DataFr
     )
 
 
-def sql_result_tables(users: pd.DataFrame, events: pd.DataFrame) -> dict[str, pd.DataFrame]:
+def sql_result_tables(
+    users: pd.DataFrame, events: pd.DataFrame
+) -> dict[str, pd.DataFrame]:
     """The tables each SQL query must reproduce, keyed by output file name."""
     first_purchases = first_purchase_after_signup(users, events)
     return {
