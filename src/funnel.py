@@ -32,16 +32,34 @@ USERS_FILE = "product_users_clean.csv"
 EVENTS_FILE = "product_events_clean.csv"
 
 
-def pct(numerator: int, denominator: int, places: int = 2) -> float:
-    """Percentage rounded half-up to the given decimals, matching MySQL ROUND()."""
+def pct(numerator: int, denominator: int, places: int = 2) -> float | None:
+    """Percentage rounded half-up to the given decimals, matching MySQL ROUND().
+
+    Policy for undefined percentages (see docs/KPI_DEFINITIONS.md):
+    a zero numerator with a positive denominator is legitimately 0.0,
+    but a zero denominator makes the rate *undefined* — this returns
+    None, which the SQL queries express as NULL and the CSV files
+    serialise as an empty cell. Returning 0.0 for 0 / 0 would claim
+    a conversion rate that does not exist.
+    """
     if denominator == 0:
-        return 0.0
+        return None
     value = Decimal(int(numerator) * 100) / Decimal(int(denominator))
     return float(value.quantize(Decimal(1).scaleb(-places), rounding=ROUND_HALF_UP))
 
 
-def load_data(data_dir: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Read the user and event CSVs and stop on any integrity problem."""
+def load_data(
+    data_dir: Path, strict_duplicates: bool = True
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Read the user and event CSVs and stop on any integrity problem.
+
+    strict_duplicates (default True): exact duplicate event records
+    (same user, type and date) fail the load, as before. With
+    strict_duplicates=False, duplicates are dropped (keeping the
+    first) and a warning is issued instead — see integrity_problems()
+    and docs/KPI_DEFINITIONS.md for why the same-day grain is
+    ambiguous without event IDs or timestamps.
+    """
     for name in (USERS_FILE, EVENTS_FILE):
         if b"\r" in (data_dir / name).read_bytes():
             raise ValueError(
@@ -49,13 +67,32 @@ def load_data(data_dir: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
             )
     users = pd.read_csv(data_dir / USERS_FILE, parse_dates=["signup_date"])
     events = pd.read_csv(data_dir / EVENTS_FILE, parse_dates=["event_date"])
-    problems = integrity_problems(users, events)
+    problems = integrity_problems(users, events, strict_duplicates=strict_duplicates)
     if problems:
         raise ValueError("Data integrity check failed:\n- " + "\n- ".join(problems))
+    if not strict_duplicates:
+        import warnings
+
+        dup_mask = events.duplicated(subset=["user_id", "event_type", "event_date"])
+        if dup_mask.any():
+            warnings.warn(
+                f"Dropped {int(dup_mask.sum())} duplicate event record(s) "
+                "(same user, type and date); the funnel uses the first "
+                "occurrence. Without event IDs or timestamps, a repeated "
+                "same-day action cannot be distinguished from a duplicated "
+                "row — see docs/KPI_DEFINITIONS.md.",
+                UserWarning,
+                stacklevel=2,
+            )
+            events = events.loc[~dup_mask].reset_index(drop=True)
     return users, events
 
 
-def integrity_problems(users: pd.DataFrame, events: pd.DataFrame) -> list[str]:
+def integrity_problems(
+    users: pd.DataFrame,
+    events: pd.DataFrame,
+    strict_duplicates: bool = True,
+) -> list[str]:
     """Describe every integrity rule the inputs break; empty when they are clean."""
     problems = []
     if users.isna().any().any() or events.isna().any().any():
@@ -66,11 +103,22 @@ def integrity_problems(users: pd.DataFrame, events: pd.DataFrame) -> list[str]:
     # events of the same type on *different* dates are legitimate in
     # clickstream data and are not flagged here; only the first
     # qualifying event counts for a stage.
+    #
+    # The grain is ambiguous: with dates but no event IDs or timestamps,
+    # two identical rows could be one action recorded twice *or* two
+    # real actions on the same day. Strict mode (the default) treats
+    # them as errors, because silently dropping rows would hide a data
+    # problem in the demonstration files; lenient mode
+    # (strict_duplicates=False) drops them with a warning instead.
+    # See docs/KPI_DEFINITIONS.md.
     if events.duplicated(subset=["user_id", "event_type", "event_date"]).any():
         n_dup = int(
             events.duplicated(subset=["user_id", "event_type", "event_date"]).sum()
         )
-        problems.append(f"{n_dup} duplicate event records (same user, type and date)")
+        if strict_duplicates:
+            problems.append(
+                f"{n_dup} duplicate event records (same user, type and date)"
+            )
     unknown_types = set(events["event_type"]) - set(STAGES)
     if unknown_types:
         problems.append(f"unknown event types: {sorted(unknown_types)}")
@@ -136,6 +184,17 @@ def first_purchase_after_signup(
     ]
     joined = purchases.merge(users[["user_id", "signup_date"]], on="user_id")
     joined = joined[joined["event_date"] >= joined["signup_date"]]
+    if joined.empty:
+        # No purchasers: return the same shape with no rows, so
+        # days_to_purchase() and country_conversion() still work
+        # instead of failing on the .dt accessor below.
+        return pd.DataFrame(
+            {
+                "signup_date": pd.Series(dtype="datetime64[ns]"),
+                "purchase_date": pd.Series(dtype="datetime64[ns]"),
+                "days_to_purchase": pd.Series(dtype="int64"),
+            }
+        )
     first = joined.groupby("user_id").agg(
         signup_date=("signup_date", "first"), purchase_date=("event_date", "min")
     )
@@ -188,7 +247,9 @@ def country_conversion_ordered(
 
 
 def country_conversion_mature(
-    users: pd.DataFrame, events: pd.DataFrame
+    users: pd.DataFrame,
+    events: pd.DataFrame,
+    observation_end: pd.Timestamp | None = None,
 ) -> pd.DataFrame:
     """Country conversion among mature users only (seven-day window).
 
@@ -199,7 +260,7 @@ def country_conversion_mature(
     two are close; the headline country table remains the all-users
     version, documented in docs/KPI_DEFINITIONS.md.
     """
-    eligible, _, _ = mature_users(users, events)
+    eligible, _, _ = mature_users(users, events, observation_end=observation_end)
     grouped = (
         eligible.groupby("country")["converted"]
         .agg(total_users="size", valid_purchases="sum")
@@ -219,6 +280,11 @@ def funnel_metrics(dates: pd.DataFrame) -> pd.DataFrame:
     rows = []
     for index, (stage, users_at_stage) in enumerate(zip(STAGES, counts)):
         previous = counts[index - 1] if index else None
+        # The signup row is 100% by definition — but only when there
+        # is at least one signup. With zero signups every rate in the
+        # table is undefined, including this one (SQL agrees: see
+        # sql/02_funnel_metrics.sql).
+        signup_rate = 100.0 if counts[0] > 0 else None
         rows.append(
             {
                 "stage": f"{index + 1}_{stage}",
@@ -226,8 +292,10 @@ def funnel_metrics(dates: pd.DataFrame) -> pd.DataFrame:
                 "previous_stage_users": previous,
                 "step_conversion_pct": pct(users_at_stage, previous)
                 if index
-                else 100.0,
-                "cumulative_conversion_pct": pct(users_at_stage, counts[0]),
+                else signup_rate,
+                "cumulative_conversion_pct": pct(users_at_stage, counts[0])
+                if index
+                else signup_rate,
             }
         )
     table = pd.DataFrame(rows)
@@ -276,17 +344,28 @@ def country_conversion(
 
 
 def mature_users(
-    users: pd.DataFrame, events: pd.DataFrame, follow_up_days: int = FOLLOW_UP_DAYS
+    users: pd.DataFrame,
+    events: pd.DataFrame,
+    follow_up_days: int = FOLLOW_UP_DAYS,
+    observation_end: pd.Timestamp | None = None,
 ) -> tuple[pd.DataFrame, pd.Timestamp, pd.Timestamp]:
     """Users with a complete follow-up window, flagged if they bought within it.
 
     Window is inclusive of the boundary day: a purchase counts if
     signup_date <= purchase_date <= signup_date + follow_up_days.
-    observed_through is the maximum event date in the data — no
-    separate observation-end date is provided, so this is an
-    assumption, documented in docs/KPI_DEFINITIONS.md.
+    observed_through defaults to the maximum event date in the data —
+    that is a proxy, not proof that tracking was complete up to that
+    date: the last recorded event only shows when activity was last
+    *seen*, not that nothing happened afterwards. Pass an explicit
+    observation_end (e.g. the date a data export was cut) when one is
+    known; the default preserves the shipped results. See
+    docs/KPI_DEFINITIONS.md.
     """
-    observed_through = events["event_date"].max()
+    observed_through = (
+        pd.Timestamp(observation_end)
+        if observation_end is not None
+        else events["event_date"].max()
+    )
     cutoff = observed_through - pd.Timedelta(days=follow_up_days)
     eligible = users[users["signup_date"] <= cutoff].copy()
     purchases = events.loc[
@@ -304,15 +383,27 @@ def mature_users(
     return eligible, cutoff, observed_through
 
 
-def seven_day_conversion(users: pd.DataFrame, events: pd.DataFrame) -> pd.DataFrame:
+def seven_day_conversion(
+    users: pd.DataFrame,
+    events: pd.DataFrame,
+    observation_end: pd.Timestamp | None = None,
+) -> pd.DataFrame:
     """Conversion within seven days among users with a full window (sql/05)."""
-    eligible, cutoff, observed_through = mature_users(users, events)
+    eligible, cutoff, observed_through = mature_users(
+        users, events, observation_end=observation_end
+    )
     converted = int(eligible["converted"].sum())
+    # With no events at all there is no observation end: the SQL
+    # query returns NULL for both dates, so use empty cells here too.
     return pd.DataFrame(
         [
             {
-                "signup_cutoff": cutoff.date().isoformat(),
-                "observed_through": observed_through.date().isoformat(),
+                "signup_cutoff": ("" if pd.isna(cutoff) else cutoff.date().isoformat()),
+                "observed_through": (
+                    ""
+                    if pd.isna(observed_through)
+                    else observed_through.date().isoformat()
+                ),
                 "follow_up_days": FOLLOW_UP_DAYS,
                 "eligible_users": len(eligible),
                 "purchasers_within_7_days": converted,
@@ -333,6 +424,38 @@ def sql_result_tables(
         "04_country_segmentation.csv": country_conversion(users, first_purchases),
         "05_seven_day_conversion.csv": seven_day_conversion(users, events),
     }
+
+
+def canonical_source_hash(users: pd.DataFrame, events: pd.DataFrame) -> str:
+    """SHA-256 over every source record, in a canonical sorted form.
+
+    Aggregate counts can hide a swapped country, a shifted date or a
+    changed event type, so scripts/validate_results.py compares this
+    hash between the CSVs and the MySQL tables instead of relying on
+    counts alone. Each record becomes one line
+    ``u|<user_id>|<signup_date>|<country>`` or
+    ``e|<user_id>|<event_type>|<event_date>``; lines are sorted, so
+    row order in the file does not matter, and duplicate lines are
+    kept, so a duplicated record changes the hash. Changing any field,
+    deleting a record or adding one all change the hash.
+    """
+    import hashlib
+
+    user_lines = [
+        f"u|{int(row.user_id)}|{row.signup_date:%Y-%m-%d}|{row.country}"
+        for row in users.sort_values("user_id").itertuples(index=False)
+    ]
+    event_lines = [
+        f"e|{int(row.user_id)}|{row.event_type}|{row.event_date:%Y-%m-%d}"
+        for row in events.sort_values(
+            ["user_id", "event_type", "event_date"]
+        ).itertuples(index=False)
+    ]
+    digest = hashlib.sha256()
+    for line in sorted(user_lines + event_lines):
+        digest.update(line.encode("utf-8"))
+        digest.update(b"\n")
+    return digest.hexdigest()
 
 
 def to_csv_text(table: pd.DataFrame) -> str:

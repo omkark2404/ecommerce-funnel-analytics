@@ -19,9 +19,11 @@ Covers:
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 
 from src.funnel import (
     STAGES,
+    canonical_source_hash,
     country_conversion,
     days_to_purchase,
     first_purchase_after_signup,
@@ -65,8 +67,17 @@ class TestPct:
     def test_example_59_7(self):
         assert pct(2577, 4320, places=1) == 59.7
 
-    def test_zero_denominator_returns_zero(self):
-        assert pct(100, 0) == 0.0
+    def test_zero_denominator_is_undefined(self):
+        # A rate with no denominator is undefined, not 0%: 0 / 0 has
+        # no value, and reporting 0% would claim a conversion rate
+        # that does not exist. SQL expresses this as NULL (see
+        # sql/02_funnel_metrics.sql, which uses NULLIF).
+        assert pct(100, 0) is None
+        assert pct(0, 0) is None
+
+    def test_zero_numerator_with_positive_denominator_is_zero(self):
+        # The opposite case is a real measurement: nobody converted.
+        assert pct(0, 100) == 0.0
 
     def test_100_pct(self):
         assert pct(5, 5) == 100.0
@@ -332,6 +343,28 @@ class TestSevenDayWindow:
         result = seven_day_conversion(self._users(), self._events())
         assert result.loc[0, "conversion_rate_pct"] == 50.0
 
+    def test_explicit_observation_end_moves_the_cutoff(self):
+        # Same data, but the observation is cut at 2024-01-14 instead
+        # of the latest event (2024-01-20): cutoff becomes 2024-01-07,
+        # so user 2 (signup 2024-01-06) is still eligible but user 1's
+        # purchase is unchanged — and the reported observed_through
+        # is the explicit date, not the max event date.
+        result = seven_day_conversion(
+            self._users(),
+            self._events(),
+            observation_end=pd.Timestamp("2024-01-14"),
+        )
+        assert result.loc[0, "observed_through"] == "2024-01-14"
+        assert result.loc[0, "signup_cutoff"] == "2024-01-07"
+        assert result.loc[0, "eligible_users"] == 2
+        assert result.loc[0, "purchasers_within_7_days"] == 1
+
+    def test_default_observation_end_is_max_event_date(self):
+        # No explicit end: behaviour is unchanged from before.
+        result = seven_day_conversion(self._users(), self._events())
+        assert result.loc[0, "observed_through"] == "2024-01-20"
+        assert result.loc[0, "signup_cutoff"] == "2024-01-13"
+
 
 # ---------------------------------------------------------------------------
 # Core output tables (funnel_metrics, days_to_purchase, country_conversion)
@@ -540,7 +573,47 @@ class TestZeroConversionAndEmpty:
         events = _make_events((1, "signup", "2024-01-01"))
         table = funnel_metrics(stage_dates(events))
         assert table["users"].tolist() == [1, 0, 0, 0, 0]
+        # Cumulative conversion is 0% (0 of 1 signup) — a real rate.
         assert table["cumulative_conversion_pct"].tolist()[-1] == 0.0
+        # Step rates after login are undefined, not 0%: their
+        # denominators (users at the previous stage) are zero.
+        assert table.loc[1, "step_conversion_pct"] == 0.0  # login: 0 of 1
+        assert pd.isna(table.loc[2, "step_conversion_pct"])  # view: 0 of 0
+        assert pd.isna(table.loc[3, "step_conversion_pct"])  # cart: 0 of 0
+        assert pd.isna(table.loc[4, "step_conversion_pct"])  # purchase: 0 of 0
+
+    def test_empty_funnel_is_undefined_not_100_pct(self):
+        # No users at all: even the signup row is undefined, not 100%.
+        dates = stage_dates(_make_events())
+        table = funnel_metrics(dates)
+        assert table["users"].tolist() == [0, 0, 0, 0, 0]
+        assert table["step_conversion_pct"].isna().all()
+        assert table["cumulative_conversion_pct"].isna().all()
+
+    def test_seven_day_conversion_with_no_eligible_users_is_undefined(self):
+        users = _make_users((1, "2024-01-01", "US"))
+        events = _make_events((1, "signup", "2024-01-01"))
+        # Explicit observation end before any user is mature: no one
+        # has a complete seven-day window.
+        table = seven_day_conversion(
+            users, events, observation_end=pd.Timestamp("2024-01-02")
+        )
+        assert table.loc[0, "eligible_users"] == 0
+        assert pd.isna(table.loc[0, "conversion_rate_pct"])
+
+    def test_empty_tables_have_no_rows_and_no_errors(self):
+        users = _make_users()
+        events = _make_events()
+        tables = sql_result_tables(users, events)
+        assert tables["02_funnel_metrics.csv"]["users"].tolist() == [0, 0, 0, 0, 0]
+        assert len(tables["03_days_to_purchase.csv"]) == 0
+        assert len(tables["04_country_segmentation.csv"]) == 0
+        seven = tables["05_seven_day_conversion.csv"]
+        assert seven.loc[0, "eligible_users"] == 0
+        assert seven.loc[0, "purchasers_within_7_days"] == 0
+        assert seven.loc[0, "signup_cutoff"] == ""
+        assert seven.loc[0, "observed_through"] == ""
+        assert pd.isna(seven.loc[0, "conversion_rate_pct"])
 
     def test_zero_conversion_group(self):
         users = _make_users((1, "2024-01-01", "US"), (2, "2024-01-01", "UK"))
@@ -555,7 +628,8 @@ class TestZeroConversionAndEmpty:
         assert table["conversion_rate_pct"].tolist() == [0.0, 0.0]
 
     def test_pct_zero_denominator(self):
-        assert pct(0, 0) == 0.0
+        # See TestPct: 0 / 0 is undefined (None), not 0%.
+        assert pct(0, 0) is None
 
 
 class TestOrderedVsAnyPurchase:
@@ -616,6 +690,114 @@ class TestOrderedVsAnyPurchase:
         # Only user 1 is mature (observed_through 2024-01-20, cutoff 2024-01-13)
         assert table.loc[0, "total_users"] == 1
         assert table.loc[0, "valid_purchases"] == 1
+
+
+class TestCanonicalSourceHash:
+    """canonical_source_hash() must change when any record changes,
+    even when every aggregate count stays the same."""
+
+    def _data(self):
+        users = _make_users((1, "2024-01-01", "US"), (2, "2024-01-01", "UK"))
+        events = _make_events(
+            (1, "signup", "2024-01-01"),
+            (1, "login", "2024-01-02"),
+            (2, "signup", "2024-01-01"),
+        )
+        return users, events
+
+    def test_same_data_same_hash(self):
+        users, events = self._data()
+        assert canonical_source_hash(users, events) == canonical_source_hash(
+            users, events
+        )
+
+    def test_row_order_does_not_change_hash(self):
+        users, events = self._data()
+        shuffled = events.iloc[::-1].reset_index(drop=True)
+        assert canonical_source_hash(users, events) == canonical_source_hash(
+            users, shuffled
+        )
+
+    def test_swapped_countries_change_hash_but_not_counts(self):
+        users, events = self._data()
+        swapped = users.copy()
+        swapped["country"] = ["UK", "US"]  # same counts per country
+        assert canonical_source_hash(users, events) != canonical_source_hash(
+            swapped, events
+        )
+
+    def test_shifted_date_changes_hash(self):
+        users, events = self._data()
+        shifted = events.copy()
+        shifted.loc[1, "event_date"] = pd.Timestamp("2024-01-03")
+        assert canonical_source_hash(users, events) != canonical_source_hash(
+            users, shifted
+        )
+
+    def test_changed_event_type_changes_hash(self):
+        users, events = self._data()
+        changed = events.copy()
+        changed.loc[1, "event_type"] = "view_product"
+        assert canonical_source_hash(users, events) != canonical_source_hash(
+            users, changed
+        )
+
+    def test_missing_or_extra_record_changes_hash(self):
+        users, events = self._data()
+        assert canonical_source_hash(users, events) != canonical_source_hash(
+            users, events.iloc[:-1]
+        )
+        assert canonical_source_hash(users, events) != canonical_source_hash(
+            users,
+            pd.concat(
+                [events, _make_events((2, "login", "2024-01-02"))],
+                ignore_index=True,
+            ),
+        )
+
+    def test_duplicated_record_changes_hash(self):
+        users, events = self._data()
+        doubled = pd.concat([events, events.iloc[[0]]], ignore_index=True)
+        assert canonical_source_hash(users, events) != canonical_source_hash(
+            users, doubled
+        )
+
+
+class TestDuplicateEventModes:
+    """Exact duplicates fail in strict mode (default) and are dropped
+    with a warning in lenient mode; the funnel result is the same
+    either way, because stage_dates() uses the first occurrence."""
+
+    def _write_duplicate_data(self, tmp_path):
+        (tmp_path / "product_users_clean.csv").write_text(
+            "user_id,signup_date,country\n1,2024-01-01,US\n"
+        )
+        (tmp_path / "product_events_clean.csv").write_text(
+            "user_id,event_type,event_date\n"
+            "1,signup,2024-01-01\n"
+            "1,login,2024-01-02\n"
+            "1,login,2024-01-02\n"
+        )
+
+    def test_strict_mode_fails_on_duplicate(self, tmp_path):
+        self._write_duplicate_data(tmp_path)
+        with pytest.raises(ValueError, match="duplicate event records"):
+            load_data(tmp_path)
+
+    def test_lenient_mode_drops_duplicate_with_warning(self, tmp_path):
+        self._write_duplicate_data(tmp_path)
+        with pytest.warns(UserWarning, match="Dropped 1 duplicate"):
+            users, events = load_data(tmp_path, strict_duplicates=False)
+        assert len(events) == 2
+        table = funnel_metrics(stage_dates(events))
+        assert table["users"].tolist() == [1, 1, 0, 0, 0]
+
+    def test_lenient_mode_same_result_as_clean_data(self, tmp_path):
+        self._write_duplicate_data(tmp_path)
+        with pytest.warns(UserWarning):
+            _, events_lenient = load_data(tmp_path, strict_duplicates=False)
+        clean = _make_events((1, "signup", "2024-01-01"), (1, "login", "2024-01-02"))
+        assert stage_dates(events_lenient).equals(stage_dates(clean))
 
 
 class TestLoadDataInvalid:

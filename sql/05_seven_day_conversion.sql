@@ -41,20 +41,29 @@ SELECT
     MAX(m.observed_through) AS observed_through,
     7 AS follow_up_days,
     COUNT(*) AS eligible_users,
-    SUM(
-        CASE
-            WHEN p.purchase_date IS NOT NULL
-                THEN 1
-            ELSE 0
-        END
-    ) AS purchasers_within_7_days,
-    ROUND(
+    -- COALESCE: with no eligible users SUM() over zero rows is NULL,
+    -- but the count of purchasers is 0 — the rate below is still NULL
+    -- (undefined) via NULLIF(COUNT(*), 0), matching src/funnel.py.
+    COALESCE(
         SUM(
             CASE
                 WHEN p.purchase_date IS NOT NULL
                     THEN 1
                 ELSE 0
             END
+        ),
+        0
+    ) AS purchasers_within_7_days,
+    ROUND(
+        COALESCE(
+            SUM(
+                CASE
+                    WHEN p.purchase_date IS NOT NULL
+                        THEN 1
+                    ELSE 0
+                END
+            ),
+            0
         ) * 100.0 / NULLIF(COUNT(*), 0),
         2
     ) AS conversion_rate_pct

@@ -17,7 +17,31 @@ reached the previous stage.
 - `step_conversion_pct` = users at this stage / users at the previous stage × 100.
 - `cumulative_conversion_pct` = users at this stage / signups × 100.
 - Denominator for the first stage is signups; its step and cumulative
-  rates are 100% by definition.
+  rates are 100% by definition — when there is at least one signup.
+  With zero signups, every rate in the funnel table is undefined.
+
+## Undefined percentages
+
+A percentage is undefined when its denominator is zero. That is
+different from a 0% rate, which is a real measurement (zero conversions
+out of a positive number of users).
+
+- **Policy (shared by SQL and Python):** an undefined percentage is
+  `NULL` in SQL and `None` in `src/funnel.py:pct()`, serialised as an
+  empty cell in the CSV files. It is never reported as 0%.
+- **Where it can occur:** a funnel stage with zero users at the
+  previous stage (e.g. no logins at all makes every later step rate
+  undefined); seven-day conversion with zero eligible users; a country
+  or cohort group with zero users (no row is produced for such a group
+  in the country/cohort tables, because the group does not exist).
+- **Where it cannot occur:** `days_to_purchase` percentages divide by
+  the total number of observed purchasers, and the table has no rows
+  when there are no purchasers at all.
+- **Rounding:** Python rounds half-up (`Decimal`, `ROUND_HALF_UP`);
+  MySQL `ROUND()` rounds half away from zero. For percentages computed
+  from integer counts these agree on every value the project has
+  produced, and `scripts/validate_results.py` compares the two
+  implementations exactly, so a disagreement would fail CI.
 
 **Same-day events:** events carry dates, not timestamps. Events on the
 same day are assumed to follow stage order. Date-only data cannot prove
