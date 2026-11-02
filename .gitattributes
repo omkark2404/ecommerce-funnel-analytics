@@ -10,3 +10,12 @@ LICENSE text eol=lf
 *.sql text eol=lf
 *.yml text eol=lf
 *.ipynb text eol=lf
+
+# Language stats: the notebook is a rendered report of the Python/SQL
+# analysis, not the primary code. Mark it vendored so GitHub reports
+# Python and SQL as the repository languages.
+notebooks/funnel_analysis.ipynb linguist-vendored=true
+# Generated outputs are checked in so the results are viewable without
+# running the notebook, but they are not source code.
+outputs/** linguist-generated=true
+data/*.csv linguist-generated=true
