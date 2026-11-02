@@ -1,5 +1,10 @@
 -- User-level funnel. Date-only data means same-day events are treated as
 -- eligible in the listed stage order; the source cannot prove within-day order.
+--
+-- Each stage is a LEFT JOIN on the previous stage's date, so a user
+-- counts at a stage only if they reached the previous one first.
+-- This replaces the earlier version's five correlated subqueries
+-- with the same logic in join form; the output table is unchanged.
 USE ecommerce_analytics;
 
 WITH signup_stage AS (
@@ -13,15 +18,14 @@ login_stage AS (
     SELECT
         s.user_id,
         s.signup_date,
-        (
-            SELECT MIN(e.event_date)
-            FROM events AS e
-            WHERE
-                e.user_id = s.user_id
-                AND e.event_type = 'login'
-                AND e.event_date >= s.signup_date
-        ) AS login_date
+        MIN(e.event_date) AS login_date
     FROM signup_stage AS s
+    LEFT JOIN events AS e
+        ON
+            e.user_id = s.user_id
+            AND e.event_type = 'login'
+            AND e.event_date >= s.signup_date
+    GROUP BY s.user_id, s.signup_date
 ),
 
 view_stage AS (
@@ -29,16 +33,14 @@ view_stage AS (
         l.user_id,
         l.signup_date,
         l.login_date,
-        (
-            SELECT MIN(e.event_date)
-            FROM events AS e
-            WHERE
-                e.user_id = l.user_id
-                AND e.event_type = 'view_product'
-                AND l.login_date IS NOT NULL
-                AND e.event_date >= l.login_date
-        ) AS view_date
+        MIN(e.event_date) AS view_date
     FROM login_stage AS l
+    LEFT JOIN events AS e
+        ON
+            e.user_id = l.user_id
+            AND e.event_type = 'view_product'
+            AND e.event_date >= l.login_date
+    GROUP BY l.user_id, l.signup_date, l.login_date
 ),
 
 cart_stage AS (
@@ -47,16 +49,14 @@ cart_stage AS (
         v.signup_date,
         v.login_date,
         v.view_date,
-        (
-            SELECT MIN(e.event_date)
-            FROM events AS e
-            WHERE
-                e.user_id = v.user_id
-                AND e.event_type = 'add_to_cart'
-                AND v.view_date IS NOT NULL
-                AND e.event_date >= v.view_date
-        ) AS cart_date
+        MIN(e.event_date) AS cart_date
     FROM view_stage AS v
+    LEFT JOIN events AS e
+        ON
+            e.user_id = v.user_id
+            AND e.event_type = 'add_to_cart'
+            AND e.event_date >= v.view_date
+    GROUP BY v.user_id, v.signup_date, v.login_date, v.view_date
 ),
 
 purchase_stage AS (
@@ -66,16 +66,15 @@ purchase_stage AS (
         c.login_date,
         c.view_date,
         c.cart_date,
-        (
-            SELECT MIN(e.event_date)
-            FROM events AS e
-            WHERE
-                e.user_id = c.user_id
-                AND e.event_type = 'purchase'
-                AND c.cart_date IS NOT NULL
-                AND e.event_date >= c.cart_date
-        ) AS purchase_date
+        MIN(e.event_date) AS purchase_date
     FROM cart_stage AS c
+    LEFT JOIN events AS e
+        ON
+            e.user_id = c.user_id
+            AND e.event_type = 'purchase'
+            AND e.event_date >= c.cart_date
+    GROUP BY
+        c.user_id, c.signup_date, c.login_date, c.view_date, c.cart_date
 ),
 
 funnel_counts AS (
