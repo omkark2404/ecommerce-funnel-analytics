@@ -38,6 +38,7 @@ from src.funnel import (
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_users(*rows: tuple) -> pd.DataFrame:
     """Create a minimal users DataFrame from (user_id, signup_date, country) tuples."""
     return pd.DataFrame(rows, columns=["user_id", "signup_date", "country"]).assign(
@@ -55,6 +56,7 @@ def _make_events(*rows: tuple) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 # pct() – half-up rounding
 # ---------------------------------------------------------------------------
+
 
 class TestPct:
     def test_example_43_0(self):
@@ -81,6 +83,7 @@ class TestPct:
 # ---------------------------------------------------------------------------
 # integrity_problems()
 # ---------------------------------------------------------------------------
+
 
 class TestIntegrityProblems:
     """Each sub-test injects exactly one violation and checks the right rule fires."""
@@ -164,15 +167,16 @@ class TestIntegrityProblems:
 # stage_dates() – ordering rules
 # ---------------------------------------------------------------------------
 
+
 class TestStageDates:
     def _full_funnel_events(self, user_id: int = 1) -> pd.DataFrame:
         """One user who completes every stage in order."""
         rows = [
-            (user_id, "signup",       "2024-01-01"),
-            (user_id, "login",        "2024-01-02"),
+            (user_id, "signup", "2024-01-01"),
+            (user_id, "login", "2024-01-02"),
             (user_id, "view_product", "2024-01-03"),
-            (user_id, "add_to_cart",  "2024-01-04"),
-            (user_id, "purchase",     "2024-01-05"),
+            (user_id, "add_to_cart", "2024-01-04"),
+            (user_id, "purchase", "2024-01-05"),
         ]
         return _make_events(*rows)
 
@@ -195,11 +199,11 @@ class TestStageDates:
         A user who has a signup event but no login event must stop at signup.
         """
         events = _make_events(
-            (1, "signup",       "2024-01-01"),
+            (1, "signup", "2024-01-01"),
             # no login for user 1
             (1, "view_product", "2024-01-03"),
-            (1, "add_to_cart",  "2024-01-04"),
-            (1, "purchase",     "2024-01-05"),
+            (1, "add_to_cart", "2024-01-04"),
+            (1, "purchase", "2024-01-05"),
         )
         dates = stage_dates(events)
         # signup is present
@@ -217,8 +221,8 @@ class TestStageDates:
         """
         events = _make_events(
             (1, "signup", "2024-01-01"),
-            (1, "login",  "2023-12-31"),  # before signup – should be ignored
-            (1, "login",  "2024-01-02"),  # valid login
+            (1, "login", "2023-12-31"),  # before signup – should be ignored
+            (1, "login", "2024-01-02"),  # valid login
         )
         dates = stage_dates(events)
         # login should be 2024-01-02 (qualifying date), not 2023-12-31
@@ -238,11 +242,11 @@ class TestStageDates:
     def test_same_day_events_advance_the_funnel(self):
         # All events on the same day – same-day is allowed by the >= comparison
         events = _make_events(
-            (1, "signup",       "2024-01-01"),
-            (1, "login",        "2024-01-01"),
+            (1, "signup", "2024-01-01"),
+            (1, "login", "2024-01-01"),
             (1, "view_product", "2024-01-01"),
-            (1, "add_to_cart",  "2024-01-01"),
-            (1, "purchase",     "2024-01-01"),
+            (1, "add_to_cart", "2024-01-01"),
+            (1, "purchase", "2024-01-01"),
         )
         dates = stage_dates(events)
         for stage in STAGES:
@@ -252,6 +256,7 @@ class TestStageDates:
 # ---------------------------------------------------------------------------
 # Seven-day window (mature_users / seven_day_conversion)
 # ---------------------------------------------------------------------------
+
 
 class TestSevenDayWindow:
     """
@@ -282,13 +287,17 @@ class TestSevenDayWindow:
     def _events(self) -> pd.DataFrame:
         return _make_events(
             # user 1
-            (1, "signup",   "2024-01-01"),
-            (1, "purchase", "2024-01-05"),   # day 4 within 7-day window -> converted
+            (1, "signup", "2024-01-01"),
+            (1, "purchase", "2024-01-05"),  # day 4 within 7-day window -> converted
             # user 2
-            (2, "signup",   "2024-01-06"),
-            (2, "purchase", "2024-01-20"),   # day 14, outside 7-day window -> not converted
+            (2, "signup", "2024-01-06"),
+            (
+                2,
+                "purchase",
+                "2024-01-20",
+            ),  # day 14, outside 7-day window -> not converted
             # user 3 (ineligible: signup 2024-01-15 > cutoff 2024-01-13)
-            (3, "signup",   "2024-01-15"),
+            (3, "signup", "2024-01-15"),
         )
 
     def test_observed_through_is_latest_event(self):
@@ -327,6 +336,7 @@ class TestSevenDayWindow:
 # ---------------------------------------------------------------------------
 # Core output tables (funnel_metrics, days_to_purchase, country_conversion)
 # ---------------------------------------------------------------------------
+
 
 class TestCoreOutputTables:
     """Three users: one completes the funnel, one stops at login,
@@ -440,3 +450,210 @@ class TestCoreOutputTables:
         assert len(tables["04_country_segmentation.csv"]) == 2
         assert len(tables["05_seven_day_conversion.csv"]) == 1
 
+
+# ---------------------------------------------------------------------------
+# Edge cases added in the analytics-quality remediation
+# ---------------------------------------------------------------------------
+
+from src.funnel import (  # noqa: E402
+    country_conversion_mature,
+    country_conversion_ordered,
+    load_data,
+    ordered_first_purchase,
+)
+
+
+class TestDuplicateEvents:
+    def test_duplicate_event_record_is_a_problem(self):
+        users = _make_users((1, "2024-01-01", "US"))
+        events = _make_events(
+            (1, "signup", "2024-01-01"),
+            (1, "login", "2024-01-02"),
+            (1, "login", "2024-01-02"),  # exact duplicate record
+        )
+        problems = integrity_problems(users, events)
+        assert any("duplicate event" in p for p in problems)
+
+    def test_repeat_event_on_different_date_is_not_a_duplicate(self):
+        # Repeated logins on different days are legitimate clickstream data.
+        users = _make_users((1, "2024-01-01", "US"))
+        events = _make_events(
+            (1, "signup", "2024-01-01"),
+            (1, "login", "2024-01-02"),
+            (1, "login", "2024-01-03"),
+        )
+        problems = integrity_problems(users, events)
+        assert not any("duplicate event" in p for p in problems)
+        # stage_dates uses the first qualifying login
+        assert stage_dates(events).loc[1, "login"] == pd.Timestamp("2024-01-02")
+
+
+class TestMultipleEventsSameStage:
+    def test_first_qualifying_event_wins(self):
+        events = _make_events(
+            (1, "signup", "2024-01-01"),
+            (1, "login", "2024-01-05"),
+            (1, "login", "2024-01-03"),
+            (1, "login", "2024-01-02"),
+        )
+        assert stage_dates(events).loc[1, "login"] == pd.Timestamp("2024-01-02")
+
+
+class TestSevenDayBoundary:
+    """Purchase exactly 7 days after signup counts; day 8 does not."""
+
+    def _pair(self, purchase_day: int):
+        users = _make_users((1, "2024-01-01", "US"))
+        events = _make_events(
+            (1, "signup", "2024-01-01"),
+            (1, "purchase", f"2024-01-{1 + purchase_day:02d}"),
+            # latest event anchors observed_through so user 1 is mature
+            (1, "login", "2024-01-20"),
+        )
+        return users, events
+
+    def test_day_7_counts(self):
+        users, events = self._pair(7)
+        eligible, _, _ = mature_users(users, events)
+        assert bool(eligible.set_index("user_id").loc[1, "converted"]) is True
+
+    def test_day_8_does_not_count(self):
+        users, events = self._pair(8)
+        eligible, _, _ = mature_users(users, events)
+        assert bool(eligible.set_index("user_id").loc[1, "converted"]) is False
+
+    def test_purchase_after_seven_days_still_in_days_table(self):
+        # >7-day purchases are not a failure: they appear in days_to_purchase
+        # (any-purchase) even though they are excluded from seven-day conversion.
+        users = _make_users((1, "2024-01-01", "US"))
+        events = _make_events(
+            (1, "signup", "2024-01-01"),
+            (1, "purchase", "2024-01-20"),
+        )
+        first = first_purchase_after_signup(users, events)
+        assert first.loc[1, "days_to_purchase"] == 19
+        assert days_to_purchase(first).loc[0, "days_to_purchase"] == 19
+
+
+class TestZeroConversionAndEmpty:
+    def test_signup_only_user(self):
+        events = _make_events((1, "signup", "2024-01-01"))
+        table = funnel_metrics(stage_dates(events))
+        assert table["users"].tolist() == [1, 0, 0, 0, 0]
+        assert table["cumulative_conversion_pct"].tolist()[-1] == 0.0
+
+    def test_zero_conversion_group(self):
+        users = _make_users((1, "2024-01-01", "US"), (2, "2024-01-01", "UK"))
+        events = _make_events(
+            (1, "signup", "2024-01-01"),
+            (2, "signup", "2024-01-01"),
+        )
+        first = first_purchase_after_signup(users, events)
+        assert len(first) == 0
+        table = country_conversion(users, first)
+        assert table["valid_purchases"].tolist() == [0, 0]
+        assert table["conversion_rate_pct"].tolist() == [0.0, 0.0]
+
+    def test_pct_zero_denominator(self):
+        assert pct(0, 0) == 0.0
+
+
+class TestOrderedVsAnyPurchase:
+    def test_ordered_first_purchase_excludes_skip(self):
+        users = _make_users((1, "2024-01-01", "US"))
+        events = _make_events(
+            (1, "signup", "2024-01-01"),
+            (1, "purchase", "2024-01-02"),
+        )
+        dates = stage_dates(events)
+        assert len(ordered_first_purchase(dates)) == 0
+        assert len(first_purchase_after_signup(users, events)) == 1
+
+    def test_ordered_and_any_agree_on_full_funnel(self):
+        users = _make_users((1, "2024-01-01", "US"))
+        events = _make_events(
+            (1, "signup", "2024-01-01"),
+            (1, "login", "2024-01-02"),
+            (1, "view_product", "2024-01-03"),
+            (1, "add_to_cart", "2024-01-04"),
+            (1, "purchase", "2024-01-05"),
+        )
+        dates = stage_dates(events)
+        ordered = ordered_first_purchase(dates)
+        any_purchase = first_purchase_after_signup(users, events)
+        assert len(ordered) == len(any_purchase) == 1
+        assert (
+            ordered.loc[1, "days_to_purchase"]
+            == any_purchase.loc[1, "days_to_purchase"]
+        )
+
+    def test_country_conversion_ordered(self):
+        users = _make_users((1, "2024-01-01", "US"), (2, "2024-01-01", "UK"))
+        events = _make_events(
+            (1, "signup", "2024-01-01"),
+            (1, "purchase", "2024-01-02"),  # US skips stages
+            (2, "signup", "2024-01-01"),
+            (2, "login", "2024-01-02"),
+            (2, "view_product", "2024-01-03"),
+            (2, "add_to_cart", "2024-01-04"),
+            (2, "purchase", "2024-01-05"),  # UK completes the funnel
+        )
+        dates = stage_dates(events)
+        ordered = country_conversion_ordered(users, dates)
+        by_country = ordered.set_index("country")
+        assert by_country.loc["US", "valid_purchases"] == 0
+        assert by_country.loc["UK", "valid_purchases"] == 1
+
+    def test_country_conversion_mature_excludes_recent_signups(self):
+        users = _make_users((1, "2024-01-01", "US"), (2, "2024-01-19", "US"))
+        events = _make_events(
+            (1, "signup", "2024-01-01"),
+            (1, "purchase", "2024-01-03"),
+            (2, "signup", "2024-01-19"),
+            (2, "purchase", "2024-01-20"),
+        )
+        table = country_conversion_mature(users, events)
+        # Only user 1 is mature (observed_through 2024-01-20, cutoff 2024-01-13)
+        assert table.loc[0, "total_users"] == 1
+        assert table.loc[0, "valid_purchases"] == 1
+
+
+class TestLoadDataInvalid:
+    def test_missing_value_fails_load(self, tmp_path):
+        (tmp_path / "product_users_clean.csv").write_text(
+            "user_id,signup_date,country\n1,2024-01-01,\n"
+        )
+        (tmp_path / "product_events_clean.csv").write_text(
+            "user_id,event_type,event_date\n1,signup,2024-01-01\n"
+        )
+        try:
+            load_data(tmp_path)
+        except ValueError as exc:
+            assert "missing values" in str(exc)
+        else:
+            raise AssertionError("load_data should have failed on missing values")
+
+
+class TestRegressionSample:
+    """Sample-specific regression values for the shipped dataset only.
+
+    These are NOT universal requirements — they pin the published
+    numbers for the bundled sample so an accidental change is
+    caught. If the dataset is ever replaced, these values must be
+    updated with the new dataset, not treated as a failure.
+    """
+
+    def test_shipped_sample_headline_numbers(self):
+        import pathlib
+
+        root = pathlib.Path(__file__).resolve().parents[1]
+        users, events = load_data(root / "data")
+        tables = sql_result_tables(users, events)
+        funnel_table = tables["02_funnel_metrics.csv"]
+        assert funnel_table["users"].tolist() == [6000, 5396, 4320, 2577, 1298]
+        assert funnel_table["cumulative_conversion_pct"].tolist()[-1] == 21.63
+        assert funnel_table["step_conversion_pct"].tolist()[-1] == 50.37
+        # Ordered and any-purchase agree on this sample (no skipped stages)
+        dates = stage_dates(events)
+        assert len(ordered_first_purchase(dates)) == 1298
+        assert len(first_purchase_after_signup(users, events)) == 1298
