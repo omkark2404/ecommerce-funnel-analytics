@@ -1,5 +1,9 @@
 -- Account-level signup-to-purchase conversion. Differences are descriptive;
 -- this query does not establish statistical significance or causality.
+-- Definition: any purchase on or after signup counts, even if the user
+-- skipped an intermediate stage (unlike sql/02, which requires stage
+-- order). In this sample the two agree — no user skips a stage — so
+-- the result is the same either way; see notebook §1.
 USE ecommerce_analytics;
 
 WITH user_conversion AS (
