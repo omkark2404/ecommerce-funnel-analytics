@@ -11,22 +11,28 @@ Covers:
     - unknown event types
 - pct() half-up rounding
 - the seven-day window (mature_users / seven_day_conversion)
+- the core output tables (funnel_metrics, days_to_purchase,
+  country_conversion, sql_result_tables) — these were previously
+  checked only by running the notebook / CI, not by unit tests
 """
 
 from __future__ import annotations
 
 import pandas as pd
-import pytest
 
 from src.funnel import (
     STAGES,
+    country_conversion,
+    days_to_purchase,
+    first_purchase_after_signup,
+    funnel_metrics,
     integrity_problems,
     mature_users,
     pct,
     seven_day_conversion,
+    sql_result_tables,
     stage_dates,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -316,3 +322,121 @@ class TestSevenDayWindow:
     def test_seven_day_conversion_rate(self):
         result = seven_day_conversion(self._users(), self._events())
         assert result.loc[0, "conversion_rate_pct"] == 50.0
+
+
+# ---------------------------------------------------------------------------
+# Core output tables (funnel_metrics, days_to_purchase, country_conversion)
+# ---------------------------------------------------------------------------
+
+class TestCoreOutputTables:
+    """Three users: one completes the funnel, one stops at login,
+    one stops at product view.
+
+    Expected funnel: signup 3, login 3, view 2, cart 1, purchase 1.
+    """
+
+    def _data(self) -> tuple[pd.DataFrame, pd.DataFrame]:
+        users = _make_users(
+            (1, "2024-01-01", "US"),
+            (2, "2024-01-01", "US"),
+            (3, "2024-01-02", "UK"),
+        )
+        events = _make_events(
+            (1, "signup", "2024-01-01"),
+            (1, "login", "2024-01-02"),
+            (1, "view_product", "2024-01-03"),
+            (1, "add_to_cart", "2024-01-04"),
+            (1, "purchase", "2024-01-05"),
+            (2, "signup", "2024-01-01"),
+            (2, "login", "2024-01-02"),
+            (3, "signup", "2024-01-02"),
+            (3, "login", "2024-01-03"),
+            (3, "view_product", "2024-01-04"),
+        )
+        return users, events
+
+    def test_funnel_metrics_counts(self):
+        _, events = self._data()
+        table = funnel_metrics(stage_dates(events))
+        assert table["users"].tolist() == [3, 3, 2, 1, 1]
+        assert table["stage"].tolist() == [
+            "1_signup",
+            "2_login",
+            "3_view_product",
+            "4_add_to_cart",
+            "5_purchase",
+        ]
+
+    def test_funnel_metrics_rates(self):
+        _, events = self._data()
+        table = funnel_metrics(stage_dates(events))
+        # view: 2/3, cart: 1/2, purchase: 1/1; cumulative purchase: 1/3
+        assert table["step_conversion_pct"].tolist() == [
+            100.0,
+            100.0,
+            66.67,
+            50.0,
+            100.0,
+        ]
+        assert table["cumulative_conversion_pct"].tolist() == [
+            100.0,
+            100.0,
+            66.67,
+            33.33,
+            33.33,
+        ]
+
+    def test_days_to_purchase(self):
+        users, events = self._data()
+        first = first_purchase_after_signup(users, events)
+        table = days_to_purchase(first)
+        assert len(table) == 1
+        assert table.loc[0, "days_to_purchase"] == 4
+        assert table.loc[0, "observed_purchasers"] == 1
+        assert table.loc[0, "pct_of_observed_purchasers"] == 100.0
+
+    def test_country_conversion(self):
+        users, events = self._data()
+        first = first_purchase_after_signup(users, events)
+        table = country_conversion(users, first)
+        by_country = table.set_index("country")
+        assert by_country.loc["US", "total_users"] == 2
+        assert by_country.loc["US", "valid_purchases"] == 1
+        assert by_country.loc["US", "conversion_rate_pct"] == 50.0
+        assert by_country.loc["UK", "valid_purchases"] == 0
+        # Sorted by conversion rate, highest first.
+        assert table["country"].tolist() == ["US", "UK"]
+
+    def test_country_conversion_counts_any_purchase_after_signup(self):
+        """country_conversion / days_to_purchase count a purchase on or
+        after signup even if the user skipped an intermediate stage,
+        while funnel_metrics counts only ordered purchases.
+
+        In the shipped sample no user skips a stage, so both
+        definitions give the same 1,298 purchasers — but the
+        difference is a real definition, not an accident, so it is
+        pinned here and documented in src/funnel.py.
+        """
+        users = _make_users((1, "2024-01-01", "US"))
+        events = _make_events(
+            (1, "signup", "2024-01-01"),
+            (1, "purchase", "2024-01-02"),  # no login / view / cart
+        )
+        first = first_purchase_after_signup(users, events)
+        assert country_conversion(users, first).loc[0, "valid_purchases"] == 1
+        assert funnel_metrics(stage_dates(events))["users"].tolist()[-1] == 0
+
+    def test_sql_result_tables_keys_and_shapes(self):
+        users, events = self._data()
+        tables = sql_result_tables(users, events)
+        assert set(tables) == {
+            "02_funnel_metrics.csv",
+            "03_days_to_purchase.csv",
+            "04_country_segmentation.csv",
+            "05_seven_day_conversion.csv",
+        }
+        assert len(tables["02_funnel_metrics.csv"]) == 5
+        assert len(tables["03_days_to_purchase.csv"]) == 1
+        assert len(tables["04_country_segmentation.csv"]) == 2
+        assert len(tables["05_seven_day_conversion.csv"]) == 1
+
