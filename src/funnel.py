@@ -127,9 +127,10 @@ def first_purchase_after_signup(
     Note the definition: this counts *any* purchase on or after signup,
     even if the user skipped an intermediate stage. funnel_metrics()
     is stricter — it counts only purchases reached in stage order.
-    In the shipped sample the two agree (1,298 purchasers, no user
-    skips a stage; see notebook §1), but they are different metrics
-    and the difference is pinned by a test in tests/test_funnel.py.
+    In the shipped sample the two differ: 1,275 ordered vs 1,305
+    any-purchase purchasers, because 30 users skipped a stage
+    (see notebook §1). The difference is pinned by a test in
+    tests/test_funnel.py.
     """
     purchases = events.loc[
         events["event_type"] == "purchase", ["user_id", "event_date"]
