@@ -42,11 +42,14 @@ SELECT
     -- defined (latest event date), so the cutoff and observed
     -- through are reported rather than NULL. When there are no
     -- events at all both are NULL, matching src/funnel.py.
-    -- MAX() over the single-row window keeps the query valid under
-    -- ONLY_FULL_GROUP_BY (the dates are aggregates, not bare
-    -- columns) and changes nothing: the window has exactly one row.
-    DATE_SUB(MAX(w.observed_through), INTERVAL 7 DAY) AS signup_cutoff,
-    MAX(w.observed_through) AS observed_through,
+    -- Scalar subqueries, not aggregates over the join: MAX() over
+    -- an empty mature set is NULL, so the dates must not depend on
+    -- the join producing any rows at all.
+    DATE_SUB(
+        (SELECT observed_through FROM observation_window),
+        INTERVAL 7 DAY
+    ) AS signup_cutoff,
+    (SELECT observed_through FROM observation_window) AS observed_through,
     7 AS follow_up_days,
     COUNT(*) AS eligible_users,
     -- COALESCE: with no eligible users SUM() over zero rows is NULL,
@@ -75,6 +78,5 @@ SELECT
         ) * 100.0 / NULLIF(COUNT(*), 0),
         2
     ) AS conversion_rate_pct
-FROM observation_window AS w
-CROSS JOIN mature_users AS m
+FROM mature_users AS m
 LEFT JOIN qualified_purchases_in_window AS p ON p.user_id = m.user_id;
