@@ -42,8 +42,11 @@ SELECT
     -- defined (latest event date), so the cutoff and observed
     -- through are reported rather than NULL. When there are no
     -- events at all both are NULL, matching src/funnel.py.
-    DATE_SUB(w.observed_through, INTERVAL 7 DAY) AS signup_cutoff,
-    w.observed_through,
+    -- MAX() over the single-row window keeps the query valid under
+    -- ONLY_FULL_GROUP_BY (the dates are aggregates, not bare
+    -- columns) and changes nothing: the window has exactly one row.
+    DATE_SUB(MAX(w.observed_through), INTERVAL 7 DAY) AS signup_cutoff,
+    MAX(w.observed_through) AS observed_through,
     7 AS follow_up_days,
     COUNT(*) AS eligible_users,
     -- COALESCE: with no eligible users SUM() over zero rows is NULL,
