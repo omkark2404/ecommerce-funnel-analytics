@@ -206,6 +206,12 @@ def _assert_full_table(sql_file: str, expected_table: pd.DataFrame) -> None:
     """
     actual = _run(_sql_for(sql_file))
     expected = to_rows(expected_table)
+    # mysql --batch prints nothing at all — not even the column
+    # header — for a query that returns zero rows, while pandas
+    # still produces the header row. An empty result is a match
+    # only when the expected table is header-only.
+    if not actual and len(expected) == 1:
+        actual = [expected[0]]
     if actual == expected:
         return
     if len(actual) != len(expected):
@@ -315,14 +321,18 @@ def test_reload_guard_keeps_old_data_on_bad_staging(tmp_path):
     users, events = _load_fixture(tmp_path, EDGE_USERS_CSV, EDGE_EVENTS_CSV)
     try:
         loader_sql = (ROOT / "sql" / "01_load_data.sql").read_text()
-        guard = _extract_section(
+        # The extracted sections contain no USE statement (it sits
+        # at the top of sql/01), and every _run() call is a fresh
+        # mysql connection with no default database — so select the
+        # test database explicitly before running them.
+        guard = f"USE {DB};\n" + _extract_section(
             loader_sql,
             "-- BEGIN staging validation guard",
             "-- END staging validation guard",
         ).replace("ecommerce_analytics", DB)
-        swap = _extract_section(loader_sql, "-- BEGIN swap", "-- END swap").replace(
-            "ecommerce_analytics", DB
-        )
+        swap = f"USE {DB};\n" + _extract_section(
+            loader_sql, "-- BEGIN swap", "-- END swap"
+        ).replace("ecommerce_analytics", DB)
         # Staging tables as defined by sql/01 (without the LOAD DATA
         # step, which needs the server's secure-file dir): populate
         # them from the fixture, plus one bad row — an event for an
