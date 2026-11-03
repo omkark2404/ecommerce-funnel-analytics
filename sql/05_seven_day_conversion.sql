@@ -37,8 +37,13 @@ qualified_purchases_in_window AS (
 )
 
 SELECT
-    MAX(m.latest_mature_signup) AS signup_cutoff,
-    MAX(m.observed_through) AS observed_through,
+    -- The dates come from the observation window itself, not from
+    -- the mature set: with no mature users the window is still
+    -- defined (latest event date), so the cutoff and observed
+    -- through are reported rather than NULL. When there are no
+    -- events at all both are NULL, matching src/funnel.py.
+    DATE_SUB(w.observed_through, INTERVAL 7 DAY) AS signup_cutoff,
+    w.observed_through AS observed_through,
     7 AS follow_up_days,
     COUNT(*) AS eligible_users,
     -- COALESCE: with no eligible users SUM() over zero rows is NULL,
@@ -67,5 +72,6 @@ SELECT
         ) * 100.0 / NULLIF(COUNT(*), 0),
         2
     ) AS conversion_rate_pct
-FROM mature_users AS m
+FROM observation_window AS w
+CROSS JOIN mature_users AS m
 LEFT JOIN qualified_purchases_in_window AS p ON p.user_id = m.user_id;
