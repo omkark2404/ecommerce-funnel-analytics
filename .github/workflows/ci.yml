@@ -35,12 +35,14 @@ jobs:
       MYSQL_PWD: root
       PYTHONPATH: ${{ github.workspace }}
     steps:
-      # Actions are pinned to major versions (v7) and updated by
-      # Dependabot; SHA pinning was considered and not adopted, so
-      # Dependabot can keep updating them. See docs/CI.md if added.
-      - uses: actions/checkout@v7
+      # Actions are pinned to full commit SHAs (with the major
+      # version in a comment), so a compromised or re-pointed tag
+      # cannot change what runs here. Dependabot updates SHA pins
+      # too, so they stay current. SHAs resolved 2026-11-03 from
+      # the v7 tags of each action's repository.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Set up Python
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
           python-version: '3.12'
           cache: pip
@@ -53,18 +55,24 @@ jobs:
       - name: Check Python formatting
         run: python -m ruff format --check src tests scripts
       - name: Run unit tests
-        # Includes the MySQL integration test in tests/test_sql_mysql.py,
-        # which runs when MYSQL_PWD is set (it is, in this job) and is
-        # skipped otherwise.
+        # Includes the MySQL integration tests in
+        # tests/test_sql_mysql.py, which run when MYSQL_PWD is set
+        # (it is, in this job) and are skipped otherwise.
         run: python -m pytest tests/ -v
       - name: Run the notebook
         run: python -m nbconvert --to notebook --execute notebooks/funnel_analysis.ipynb --output-dir "$RUNNER_TEMP"
-      - name: Check committed result CSVs are current
-        run: git diff --exit-code -- 'outputs/*.csv'
-      - name: Check chart figures are present and valid
-        # PNG bytes vary across matplotlib versions, so this validates
-        # that each figure exists and is a real PNG — it does not
-        # compare bytes. See scripts/check_figures.py.
+      - name: Check committed result CSVs and figure manifest are current
+        # The notebook run above regenerates outputs/*.csv and
+        # outputs/figures/manifest.json in place; if the committed
+        # files differ, the notebook was not re-run after a change.
+        # Figures themselves are not diffed (PNG bytes vary across
+        # matplotlib versions) — their freshness is checked by the
+        # manifest in the next step instead.
+        run: git diff --exit-code -- 'outputs/*.csv' 'outputs/figures/manifest.json'
+      - name: Check chart figures are valid and current
+        # Fully decodes each PNG and checks the manifest's data hash
+        # against the current outputs/*.csv, so stale figures fail.
+        # See scripts/check_figures.py.
         run: python scripts/check_figures.py
       - name: Copy CSV inputs into MySQL service
         run: |

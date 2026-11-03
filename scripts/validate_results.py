@@ -91,7 +91,9 @@ def check_loaded_tables(command: list[str], env: dict[str, str], users, events) 
 
     Row counts alone would miss a swapped country, a shifted date, or a
     duplicate event record, so this also checks per-stage and per-country
-    counts, date ranges, and the data-quality query in sql/06.
+    counts, date ranges, and the data-quality query in sql/06 — and,
+    decisively, a canonical SHA-256 hash of every record on both sides,
+    which fails if any single field of any record differs.
     """
     sql = """
 USE ecommerce_analytics;
@@ -114,6 +116,38 @@ SELECT
     print(
         f"MySQL tables match the CSVs ({len(users):,} users, {len(events):,} events)."
     )
+
+    # Row-level comparison: counts alone cannot catch a swapped
+    # country, a shifted date, a changed event type, or a changed
+    # user_id when another record compensates. Compare the canonical
+    # SHA-256 of every record (see funnel.canonical_source_hash):
+    # the MySQL side builds the same canonical lines and Python
+    # hashes them, so any single-field difference fails here.
+    hash_sql = """
+USE ecommerce_analytics;
+SELECT CONCAT('u|', user_id, '|', signup_date, '|', country)
+FROM users
+UNION ALL
+SELECT CONCAT('e|', user_id, '|', event_type, '|', event_date)
+FROM events;
+"""
+    import hashlib
+
+    digest = hashlib.sha256()
+    for row in sorted(query_rows(command, env, hash_sql, "source hash")[1:]):
+        digest.update(row[0].encode("utf-8"))
+        digest.update(b"\n")
+    mysql_hash = digest.hexdigest()
+    csv_hash = funnel.canonical_source_hash(users, events)
+    if mysql_hash != csv_hash:
+        raise ValueError(
+            "MySQL tables do not match the CSV inputs record-for-record "
+            "(canonical hash differs), even though the counts agree. "
+            "A record's country, date, event type or user_id differs, "
+            "or a record is missing/extra.\n"
+            f"CSV hash:   {csv_hash}\nMySQL hash: {mysql_hash}"
+        )
+    print(f"MySQL tables match the CSVs record-for-record (SHA-256 {csv_hash[:12]}…).")
 
     # Per-stage event counts and per-country user counts, compared to pandas.
     stage_sql = """

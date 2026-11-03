@@ -1,0 +1,26 @@
+{
+  "data_sha256": "f55def2b7db1e8edd55b8831f90c86e5ff9b777d26143c21e2bb7da3bb7a4937",
+  "figures": {
+    "cohort_conversion.png": {
+      "height": 497,
+      "width": 1215
+    },
+    "country_conversion.png": {
+      "height": 497,
+      "width": 1217
+    },
+    "days_to_purchase.png": {
+      "height": 497,
+      "width": 1217
+    },
+    "funnel.png": {
+      "height": 527,
+      "width": 1217
+    },
+    "step_dropoff.png": {
+      "height": 497,
+      "width": 1517
+    }
+  },
+  "generated_by": "notebooks/funnel_analysis.ipynb"
+}

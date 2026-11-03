@@ -7,6 +7,8 @@
 
 Where do users drop out between signing up and buying, how fast do buyers convert, and does any segment behave differently? This project answers those questions for 6,000 accounts and 19,591 events (Jan–Jul 2023) across a five-stage funnel: **signup → login → product view → add to cart → purchase**.
 
+**Data provenance — read this first:** the bundled sample's original source was not recorded and its redistribution rights are unverified; it looks simulated. The results below demonstrate the method on this sample — they are not findings about a real store. A replacement with licensed, reproducible synthetic data is proposed in [PR #7](https://github.com/omkark2404/ecommerce-funnel-analytics/pull/7) and reviewed in [docs/PR7_REVIEW.md](docs/PR7_REVIEW.md). See [data/LINEAGE.md](data/LINEAGE.md).
+
 **Business question:** where do users drop out of the purchase funnel, and what should a team investigate first?
 
 **Tools:** MySQL 8.4 (CTEs, window functions) · Python (pandas, SciPy, matplotlib) · Jupyter · Docker Compose · GitHub Actions
@@ -17,7 +19,7 @@ Where do users drop out between signing up and buying, how fast do buyers conver
 
 ## Key findings
 
-1. **21.6% of signups make a purchase** (1,298 of 6,000).
+1. **21.6% of signups make a purchase** (1,298 of 6,000, ordered funnel — the headline KPI). Days-to-purchase and country conversion count any purchase after signup; in this sample that is also 1,298, because no user skips a stage.
 2. **The weakest step is add to cart → purchase:** only 50.4% of users with a cart go on to buy. One extra percentage point there is worth about 26 purchases per 6,000 signups — more than at any other step (about 22 at product view → add to cart).
 3. **The most users are lost earlier, between product view and add to cart:** 1,743 users, against 1,279 after add to cart. More people reach that step, so a better rate still loses more users in absolute terms.
 4. **Buyers convert fast:** every first purchase came within 6 days of signup (median 3 days), and every buyer bought on the day they added to cart or the next day. Among users with a full week of follow-up, 21.5% bought within 7 days.
@@ -46,7 +48,7 @@ These are hypotheses to test with A/B experiments, because observational data ca
 
 | Step | Where |
 | --- | --- |
-| Load the CSVs into MySQL with constraints (primary key, foreign key, allowed event types) | [sql/00_schema.sql](sql/00_schema.sql), [sql/01_load_data.sql](sql/01_load_data.sql) |
+| Load the CSVs into MySQL via staging tables (validated, then swapped in one transaction) with constraints (primary key, foreign key, allowed event types) | [sql/00_schema.sql](sql/00_schema.sql), [sql/01_load_data.sql](sql/01_load_data.sql) |
 | Ordered funnel: a user counts at a stage only after reaching the previous one | [sql/02_funnel_metrics.sql](sql/02_funnel_metrics.sql) |
 | Days to first purchase, with a running total from a window function | [sql/03_days_to_purchase.sql](sql/03_days_to_purchase.sql) |
 | Conversion by country | [sql/04_country_segmentation.sql](sql/04_country_segmentation.sql) |
@@ -55,9 +57,9 @@ These are hypotheses to test with A/B experiments, because observational data ca
 | Same metrics in pandas, plus data-quality checks | [src/funnel.py](src/funnel.py) |
 | Charts, chi-square tests, 95% confidence intervals, cohort and sensitivity analysis | [notebooks/funnel_analysis.ipynb](notebooks/funnel_analysis.ipynb) |
 | Cross-check: run every query in MySQL and compare with the pandas result | [scripts/validate_results.py](scripts/validate_results.py) |
-| Check that chart figures are present and valid PNGs | [scripts/check_figures.py](scripts/check_figures.py) |
+| Check that chart figures fully decode as PNGs and match the current data (via a manifest the notebook writes) | [scripts/check_figures.py](scripts/check_figures.py) |
 
-On every push, CI lints the SQL, lints and format-checks the Python (ruff), runs the unit tests (including a MySQL integration test on synthetic edge-case data), runs the notebook, confirms the committed CSVs in `outputs/` are up to date, checks the chart figures, loads the data into a MySQL container, and checks that each query returns exactly the same table as pandas. See [.github/workflows/ci.yml](.github/workflows/ci.yml).
+On every push, CI lints the SQL, lints and format-checks the Python (ruff), runs the unit tests (including MySQL integration tests that compare every field of every query on edge-case data), runs the notebook, confirms the committed CSVs in `outputs/` and the chart manifest are up to date, fully decodes the chart figures and checks them against the current data, loads the data into a MySQL container, and checks that each query returns exactly the same table as pandas — including a record-for-record hash of the loaded tables. See [.github/workflows/ci.yml](.github/workflows/ci.yml).
 
 ## Run it
 
@@ -67,19 +69,19 @@ Requires Python 3.12 and, for the MySQL steps, Docker. `make` is used below (Bas
 git clone https://github.com/omkark2404/ecommerce-funnel-analytics.git
 cd ecommerce-funnel-analytics
 python -m pip install -r requirements-dev.txt
-make test      # unit tests for src/funnel.py (47 tests; 1 MySQL integration test is skipped without a database)
+make test      # unit tests: 73 pass locally; 4 MySQL integration tests are skipped without a database (they run in CI)
 make lint      # sqlfluff for SQL, ruff for Python
 make check     # lint + tests + ruff format check + figure check
-make notebook  # re-run the notebook in place (regenerates outputs/*.csv and outputs/figures/*.png)
-make figures   # check the chart figures are present and valid PNGs
+make notebook  # re-run the notebook in place (regenerates outputs/*.csv, outputs/figures/*.png and the figure manifest)
+make figures   # check the chart figures decode as PNGs and match the current data
 ```
 
-To run the SQL against MySQL as well, copy `.env.example` to `.env`, set `MYSQL_ROOT_PASSWORD`, then:
+To run the SQL against MySQL as well, you need Docker (the `make up` / `validate` / `down` / `reset` steps below; on Windows, run them in WSL or Git Bash with Docker Desktop). Copy `.env.example` to `.env`, set `MYSQL_ROOT_PASSWORD`, then:
 
 ```bash
 make up        # start MySQL in Docker and load the schema + data
 make validate  # run the SQL queries and compare with pandas (also runs the data-quality checks)
-make down      # stop MySQL (keeps its data)
+make down      # stop MySQL (keeps its data in the named mysql-data volume)
 make reset     # stop MySQL and delete its data volume — clean start next time
 ```
 
@@ -98,7 +100,7 @@ Without `make`, run the commands listed in the [Makefile](Makefile) directly.
 
 ```text
 data/        Input CSVs and data documentation (README, LINEAGE)
-docs/        KPI definitions
+docs/        KPI definitions, PR #7 review, branch-protection guide
 sql/         MySQL schema, load script, analysis queries and data-quality checks
 src/         pandas implementation of the funnel metrics
 notebooks/   Full analysis with charts and statistical tests

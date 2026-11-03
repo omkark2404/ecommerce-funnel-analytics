@@ -2,6 +2,11 @@
 -- User-level funnel. Date-only data means same-day events are treated as
 -- eligible in the listed stage order; the source cannot prove within-day order.
 --
+-- Undefined percentages: every rate here divides by NULLIF(denominator, 0),
+-- so a zero denominator yields NULL, not 0. A zero numerator with a positive
+-- denominator is legitimately 0. src/funnel.py:pct() follows the same policy
+-- (returns None), and the CSV files serialise it as an empty cell.
+--
 -- Each stage is a LEFT JOIN on the previous stage's date, so a user
 -- counts at a stage only if they reached the previous one first.
 -- This replaces the earlier version's five correlated subqueries
@@ -92,8 +97,10 @@ SELECT
     '1_signup' AS stage,
     signups AS users,
     NULL AS previous_stage_users,
-    100.00 AS step_conversion_pct,
-    100.00 AS cumulative_conversion_pct
+    -- 100% by definition when there is at least one signup; NULL
+    -- (undefined) when there are none — matching src/funnel.py:pct().
+    ROUND(signups * 100.0 / NULLIF(signups, 0), 2) AS step_conversion_pct,
+    ROUND(signups * 100.0 / NULLIF(signups, 0), 2) AS cumulative_conversion_pct
 FROM funnel_counts
 UNION ALL
 SELECT
