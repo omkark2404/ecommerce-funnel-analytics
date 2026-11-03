@@ -43,7 +43,7 @@ SELECT
     -- through are reported rather than NULL. When there are no
     -- events at all both are NULL, matching src/funnel.py.
     DATE_SUB(w.observed_through, INTERVAL 7 DAY) AS signup_cutoff,
-    w.observed_through AS observed_through,
+    w.observed_through,
     7 AS follow_up_days,
     COUNT(*) AS eligible_users,
     -- COALESCE: with no eligible users SUM() over zero rows is NULL,
